@@ -93,13 +93,6 @@ private:
   float readShuntVoltage(uint8_t channel);
   float readCurrent(uint8_t channel);
 
-  static const int READING_SAMPLES = 5;
-  float voltageReadings[READING_SAMPLES];
-  float currentReadings[READING_SAMPLES];
-  int readingIndex;
-
-  static const int UPDATE_INTERVAL = 100;
-
   float calculateBatteryPercentage(float current, float voltage);
   float calculateEstimatedTimeToFullyCharge(float chargerCurrent, float chargerVoltage, float batteryCurrent, float batteryVoltage, float percentage);
 public:

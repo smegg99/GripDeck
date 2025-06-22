@@ -4,6 +4,9 @@
 #include "utils/DebugSerial.h"
 #include <Wire.h>
 #include <semphr.h>
+#include <managers/USBManager.h>
+
+extern USBManager* usbManager;
 
 PowerManager::PowerManager() {}
 
@@ -36,7 +39,7 @@ bool PowerManager::begin() {
 
 void PowerManager::update() {
   // Don't update too frequently to avoid I2C bus issues
-  if (millis() - lastUpdateTime < UPDATE_INTERVAL) {
+  if (millis() - lastUpdateTime < TASK_INTERVAL_POWER) {
     return;
   }
 
@@ -55,11 +58,25 @@ void PowerManager::trySetSBCPower(bool on) {
   if (on) {
     DEBUG_PRINTLN("Turning SBC power ON");
     digitalWrite(PIN_SBC_POWER_MOSFET, HIGH);
-    // TODO: Wait for SBC to recognize the USB of the controller
+
+    unsigned long startTime = millis();
+    while (!usbManager->isUSBConnected() && millis() - startTime < USB_CONNECTION_TIMEOUT) {
+      vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    if (usbManager->isUSBConnected()) {
+      DEBUG_PRINTLN("SBC recognized USB controller");
+      return;
+    }
+
+    DEBUG_PRINTLN("WARNING: SBC did not recognize USB controller within timeout, trying to turn off power");
+    trySetSBCPower(false);
+    return;
   }
   else {
     DEBUG_PRINTLN("Turning SBC power OFF");
     // TODO: Send 0x80 HID command to SBC to turn off and wait for it to stop recognizing the controller or timeout
+    digitalWrite(PIN_SBC_POWER_MOSFET, LOW);
   }
 }
 

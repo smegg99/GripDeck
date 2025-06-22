@@ -56,6 +56,7 @@
 #define USB_SERIAL_NUMBER       "GD001"
 #define USB_HID_TIMEOUT         15000   // USB HID timeout in ms - shutdown SBC if no activity (reduced for faster response)
 #define USB_HID_PING_INTERVAL   5000    // USB HID ping interval in ms (reduced for faster detection)
+#define USB_HID_KEYBOARD_PRESS_DELAY 50 // Delay after pressing a key before releasing it (ms)
 
 // Power Button Configuration
 #define POWER_BUTTON_SHORT_PRESS_MIN    50      // Minimum time for valid button press (ms)
@@ -86,8 +87,9 @@
 #define TASK_PRIORITY_CRITICAL  15
 
 // Task Update Intervals
-#define TASK_INTERVAL_POWER     100     // Power management task
-#define TASK_INTERVAL_COMM      50      // Communication tasks
+#define TASK_INTERVAL_POWER     1000     // Power management task
+#define TASK_INTERVAL_SYSTEM    100      // Communication tasks
+#define TASK_INTERVAL_USB       100      // USB HID task
 
 // Power Management Timeouts
 #define SLEEP_TIMEOUT_MS        300000  // 5 minutes idle before sleep

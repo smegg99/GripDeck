@@ -14,6 +14,7 @@ TaskHandle_t powerTaskHandle = nullptr;
 bool wokeUpFromPowerButton = false;
 
 void powerManagerTask(void* arg);
+void usbManagerTask(void* arg);
 
 void initializeHardware() {
   DEBUG_PRINTLN("Initializing hardware...");
@@ -111,6 +112,22 @@ void setup() {
   }
   DEBUG_PRINTLN("PowerTask created successfully");
 
+  result = xTaskCreatePinnedToCore(
+    usbManagerTask,
+    "USBTask",
+    TASK_STACK_SIZE_MEDIUM,
+    nullptr,
+    TASK_PRIORITY_NORMAL,
+    nullptr,
+    1
+  );
+  if (result != pdPASS) {
+    DEBUG_PRINTF("ERROR: Failed to create USBTask (error code %d)\n", result);
+    esp_restart();
+    return;
+  }
+  DEBUG_PRINTLN("USBTask created successfully");
+
   if (wokeUpFromPowerButton) {
     DEBUG_PRINTLN("Power button pressed, turning SBC power ON");
     powerManager->trySetSBCPower(true);
@@ -121,6 +138,13 @@ void powerManagerTask(void* arg) {
   for (;;) {
     powerManager->update();
     vTaskDelay(pdMS_TO_TICKS(TASK_INTERVAL_POWER));
+  }
+}
+
+void usbManagerTask(void* arg) {
+  for (;;) {
+    usbManager->update();
+    vTaskDelay(pdMS_TO_TICKS(TASK_INTERVAL_SYSTEM));
   }
 }
 
