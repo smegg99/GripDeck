@@ -116,7 +116,7 @@ public:
     }
   }
 
-  void setSBCPower(bool on);
+  void trySetSBCPower(bool on);
   bool isSBCPowerOn() const {
     return digitalRead(PIN_SBC_POWER_MOSFET) == HIGH;
   }

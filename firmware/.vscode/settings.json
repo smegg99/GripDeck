@@ -2,6 +2,9 @@
   "files.associations": {
     "*.dbclient-js": "javascript",
     "*.embeddedhtml": "html",
-    "cmath": "cpp"
+    "cmath": "cpp",
+    "memory": "cpp",
+    "functional": "cpp",
+    "type_traits": "cpp"
   }
 }

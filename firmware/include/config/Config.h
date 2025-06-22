@@ -48,8 +48,11 @@
 #define SBC_STARTUP_DELAY       2000    // Delay after SBC power on after pressing the power button in ms
 
 // USB HID Configuration
+#define USB_MY_VID              0x1209
+#define USB_MY_PID              0x2077
 #define USB_MANUFACTURER        "GripDeck"
 #define USB_PRODUCT             "SBC Controller"
+#define USB_PRODUCT_VERSION     0x0100
 #define USB_SERIAL_NUMBER       "GD001"
 #define USB_HID_TIMEOUT         15000   // USB HID timeout in ms - shutdown SBC if no activity (reduced for faster response)
 #define USB_HID_PING_INTERVAL   5000    // USB HID ping interval in ms (reduced for faster detection)

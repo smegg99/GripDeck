@@ -4,8 +4,10 @@
 #include <esp_task_wdt.h>
 #include <utils/DebugSerial.h>
 #include <managers/PowerManager.h>
+#include <managers/USBManager.h>
 
 PowerManager* powerManager;
+USBManager* usbManager;
 
 TaskHandle_t powerTaskHandle = nullptr;
 
@@ -85,6 +87,13 @@ void setup() {
     return;
   }
 
+  usbManager = new USBManager();
+  if (!usbManager->begin()) {
+    DEBUG_PRINTLN("ERROR: USBManager initialization failed");
+    esp_restart();
+    return;
+  }
+
   DEBUG_PRINTLN("Creating FreeRTOS tasks...");
   BaseType_t result = xTaskCreatePinnedToCore(
     powerManagerTask,
@@ -104,7 +113,7 @@ void setup() {
 
   if (wokeUpFromPowerButton) {
     DEBUG_PRINTLN("Power button pressed, turning SBC power ON");
-    powerManager->setSBCPower(true);
+    powerManager->trySetSBCPower(true);
   }
 }
 

@@ -27,7 +27,7 @@ bool PowerManager::begin() {
     return false;
   }
 
-  setSBCPower(false);
+  trySetSBCPower(false);
   setLEDPower(0);
 
   DEBUG_PRINTLN("PowerManager initialized successfully");
@@ -51,7 +51,7 @@ void PowerManager::update() {
   lastUpdateTime = millis();
 }
 
-void PowerManager::setSBCPower(bool on) {
+void PowerManager::trySetSBCPower(bool on) {
   if (on) {
     DEBUG_PRINTLN("Turning SBC power ON");
     digitalWrite(PIN_SBC_POWER_MOSFET, HIGH);
