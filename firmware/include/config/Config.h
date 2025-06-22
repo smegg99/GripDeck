@@ -109,5 +109,6 @@
 #define SERIAL_BAUD_RATE        115200
 #define DEBUG_SERIAL_ENABLED    true    // Enable secondary serial for debug output
 #define DEBUG_SERIAL_BAUD_RATE  115200  // Debug serial baud rate
+#define DEBUG_VERBOSE_LOGGING   true    // Enable verbose logging for debugging
 
 #endif // CONFIG_H

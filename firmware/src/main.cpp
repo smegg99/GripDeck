@@ -1,8 +1,8 @@
 // src/main.cpp
 #include <Arduino.h>
-#include "utils/DebugSerial.h"
-#include <esp_task_wdt.h>
 #include <Wire.h>
+#include <esp_task_wdt.h>
+#include <utils/DebugSerial.h>
 #include <managers/PowerManager.h>
 
 PowerManager* powerManager;
@@ -101,6 +101,11 @@ void setup() {
     return;
   }
   DEBUG_PRINTLN("PowerTask created successfully");
+
+  if (wokeUpFromPowerButton) {
+    DEBUG_PRINTLN("Power button pressed, turning SBC power ON");
+    powerManager->setSBCPower(true);
+  }
 }
 
 void powerManagerTask(void* arg) {

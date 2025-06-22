@@ -8,9 +8,6 @@
 PowerManager::PowerManager() {}
 
 PowerManager::~PowerManager() {
-  if (powerStateMutex) {
-    vSemaphoreDelete(powerStateMutex);
-  }
   if (powerDataMutex) {
     vSemaphoreDelete(powerDataMutex);
   }
@@ -18,12 +15,6 @@ PowerManager::~PowerManager() {
 
 bool PowerManager::begin() {
   DEBUG_PRINTLN("Initializing PowerManager...");
-
-  powerStateMutex = xSemaphoreCreateMutex();
-  if (!powerStateMutex) {
-    DEBUG_PRINTLN("ERROR: Failed to create power state mutex");
-    return false;
-  }
 
   powerDataMutex = xSemaphoreCreateMutex();
   if (!powerDataMutex) {
@@ -36,7 +27,6 @@ bool PowerManager::begin() {
     return false;
   }
 
-  setPowerState(POWER_OFF);
   setSBCPower(false);
   setLEDPower(0);
 
@@ -50,9 +40,10 @@ void PowerManager::update() {
     return;
   }
 
-  BatteryData batteryData = readBatteryChannel();
-  ChargerData chargerData = readChargerChannel();
+  BatteryData batteryData;
+  ChargerData chargerData;
 
+  readChannels(batteryData, chargerData);
   setPowerData(batteryData, chargerData);
 
   DEBUG_PRINTLN(powerData.toString());
@@ -63,11 +54,12 @@ void PowerManager::update() {
 void PowerManager::setSBCPower(bool on) {
   if (on) {
     DEBUG_PRINTLN("Turning SBC power ON");
-    // Code to turn on SBC power
+    digitalWrite(PIN_SBC_POWER_MOSFET, HIGH);
+    // TODO: Wait for SBC to recognize the USB of the controller
   }
   else {
     DEBUG_PRINTLN("Turning SBC power OFF");
-    // Code to turn off SBC power
+    // TODO: Send 0x80 HID command to SBC to turn off and wait for it to stop recognizing the controller or timeout
   }
 }
 
@@ -163,24 +155,37 @@ float PowerManager::readCurrent(uint8_t channel) {
   return readShuntVoltage(channel) / INA3221_SHUNT_RESISTANCE;
 }
 
-BatteryData PowerManager::readBatteryChannel() {
-  float voltage = readBusVoltage(INA3221_CHANNEL_BATTERY);
-  float current = readCurrent(INA3221_CHANNEL_BATTERY);
-  DEBUG_VERBOSE_PRINTF("Battery Channel - Voltage: %.3fV, Current: %.6fA\n", voltage, current);
-  return BatteryData{ voltage, current, voltage * current, calculateBatteryPercentage(current, voltage) };
-}
+void PowerManager::readChannels(BatteryData& batteryData, ChargerData& chargerData) {
+  // Read battery channel first
+  float batteryVoltage = readBusVoltage(INA3221_CHANNEL_BATTERY);
+  float batteryCurrent = readCurrent(INA3221_CHANNEL_BATTERY);
+  float batteryPercentage = calculateBatteryPercentage(batteryCurrent, batteryVoltage);
 
-ChargerData PowerManager::readChargerChannel() {
-  float voltage = readBusVoltage(INA3221_CHANNEL_CHARGER);
-  float current = readCurrent(INA3221_CHANNEL_CHARGER);
-  DEBUG_VERBOSE_PRINTF("Charger Channel - Voltage: %.3fV, Current: %.6fA\n", voltage, current);
-  return ChargerData{
-    voltage,
-    current,
-    voltage * current,
-    voltage >= MIN_BATTERY_CHARGING_VOLTAGE,
-    calculateEstimatedTimeToFullyCharge(current, voltage, calculateBatteryPercentage(current, voltage))
+  DEBUG_VERBOSE_PRINTF("Battery Channel - Voltage: %.3fV, Current: %.6fA\n", batteryVoltage, batteryCurrent);
+
+  batteryData = BatteryData{
+    batteryVoltage,
+    batteryCurrent,
+    batteryVoltage * batteryCurrent,
+    batteryPercentage
   };
+
+  // Read charger channel and use battery data for calculations
+  float chargerVoltage = readBusVoltage(INA3221_CHANNEL_CHARGER);
+  float chargerCurrent = readCurrent(INA3221_CHANNEL_CHARGER);
+
+  DEBUG_VERBOSE_PRINTF("Charger Channel - Voltage: %.3fV, Current: %.6fA\n", chargerVoltage, chargerCurrent);
+
+  chargerData = ChargerData{
+    chargerVoltage,
+    chargerCurrent,
+    chargerVoltage * chargerCurrent,
+    chargerVoltage >= MIN_BATTERY_CHARGING_VOLTAGE,
+    calculateEstimatedTimeToFullyCharge(chargerCurrent, chargerVoltage, batteryCurrent, batteryVoltage, batteryPercentage)
+  };
+
+  DEBUG_VERBOSE_PRINTF("Charge Time Calculation - Current: %.6fA, Voltage: %.3fV, Percentage: %.1f%%, ETA: %.1fs\n",
+    chargerCurrent, batteryVoltage, batteryPercentage, chargerData.toFullyChargeMs / 1000.0f);
 }
 
 bool PowerManager::testINA3221() {
@@ -288,10 +293,24 @@ float PowerManager::calculateBatteryPercentage(float current, float voltage) {
   return finalPercentage;
 }
 
-float PowerManager::calculateEstimatedTimeToFullyCharge(float current, float voltage, float percentage) {
-  if (current <= 0 || voltage < MIN_BATTERY_CHARGING_VOLTAGE) {
+float PowerManager::calculateEstimatedTimeToFullyCharge(float chargerCurrent, float chargerVoltage, float batteryCurrent, float batteryVoltage, float percentage) {
+  if (chargerCurrent <= 0.001f || chargerVoltage < MIN_BATTERY_CHARGING_VOLTAGE || percentage >= 99.9f) {
     return 0.0f;
   }
-  float chargeRate = current * 3600.0f / BATTERY_CAPACITY_MAH;
-  return (100.0f - percentage) / chargeRate * 3600000.0f;
+
+  float netChargingCurrent = chargerCurrent + batteryCurrent;
+
+  if (netChargingCurrent <= 0.001f) {
+    return 0.0f;
+  }
+
+  float chargeRate = (netChargingCurrent * 1000.0f * 100.0f) / BATTERY_CAPACITY_MAH;
+  if (chargeRate <= 0.0f) {
+    return 0.0f;
+  }
+
+  float remainingPercentage = 100.0f - percentage;
+  float hoursToCharge = remainingPercentage / chargeRate;
+
+  return hoursToCharge * 3600.0f * 1000.0f;
 }
