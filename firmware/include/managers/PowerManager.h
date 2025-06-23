@@ -105,6 +105,7 @@ public:
       xSemaphoreGive(powerDataMutex);
       return powerData;
     }
+    return PowerData();
   }
 
   void trySetSBCPower(bool on);

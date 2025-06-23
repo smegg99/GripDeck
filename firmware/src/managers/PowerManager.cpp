@@ -49,6 +49,11 @@ void PowerManager::update() {
 
 void PowerManager::trySetSBCPower(bool on) {
   if (on) {
+    DEBUG_PRINTLN("Checking if SBC can be powered on...");
+    if (!canPowerOnSBC()) {
+      DEBUG_PRINTLN("WARNING: SBC cannot be powered on due to low battery or already powered on");
+      return;
+    }
     DEBUG_PRINTLN("Turning SBC power ON");
     digitalWrite(PIN_SBC_POWER_MOSFET, HIGH);
 
@@ -68,7 +73,20 @@ void PowerManager::trySetSBCPower(bool on) {
   }
   else {
     DEBUG_PRINTLN("Turning SBC power OFF");
-    // TODO: Send 0x80 HID command to SBC to turn off and wait for it to stop recognizing the controller or timeout
+    usbManager->sendSystemPowerKey();
+
+    unsigned long startTime = millis();
+    while (usbManager->isUSBConnected() && millis() - startTime < USB_CONNECTION_TIMEOUT) {
+      delay(100);
+    }
+
+    if (!usbManager->isUSBConnected()) {
+      DEBUG_PRINTLN("SBC stopped recognizing USB controller");
+    }
+    else {
+      DEBUG_PRINTLN("WARNING: SBC did not stop recognizing USB controller within timeout, forcing power off anyway");
+    }
+
     digitalWrite(PIN_SBC_POWER_MOSFET, LOW);
   }
 }
