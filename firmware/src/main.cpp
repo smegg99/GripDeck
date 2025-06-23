@@ -40,8 +40,9 @@ void initializeHardware() {
   ledcAttachPin(PIN_LED_POWER_MOSFET, LED_PWM_CHANNEL);
   DEBUG_PRINTLN("PWM configured");
 
+  // Configure wake-up sources (using WAKE_UP_PIN_MASK from config)
   esp_sleep_enable_ext1_wakeup(WAKE_UP_PIN_MASK, ESP_EXT1_WAKEUP_ANY_LOW);
-  DEBUG_PRINTLN("Wake-up sources configured");
+  DEBUG_PRINTF("Wake-up sources configured with mask: 0x%llX\n", WAKE_UP_PIN_MASK);
 
   Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
   Wire.setClock(100000);
@@ -103,7 +104,7 @@ void setup() {
     esp_restart();
     return;
   }
- 
+
   bleManager = new BLEManager();
   if (!bleManager->begin()) {
     DEBUG_PRINTLN("ERROR: BLEManager initialization failed");
@@ -116,6 +117,11 @@ void setup() {
     DEBUG_PRINTLN("ERROR: SystemManager initialization failed");
     esp_restart();
     return;
+  }
+
+  // If we woke up from deep sleep, notify the system manager
+  if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1) {
+    systemManager->notifyWakeFromDeepSleep();
   }
 
   DEBUG_PRINTLN("Creating FreeRTOS tasks...");

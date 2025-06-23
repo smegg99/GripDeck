@@ -1,11 +1,14 @@
 // src/managers/USBManager.cpp
 
 #include "managers/USBManager.h"
+#include "managers/SystemManager.h"
 #include <utils/DebugSerial.h>
 #include <USB.h>
 #include "esp32-hal-tinyusb.h"
 #include "esp_event.h"
 #include "USBCDC.h"
+
+extern SystemManager* systemManager;
 
 USBManager* USBManager::instance = nullptr;
 USBManager::USBManager() {
@@ -147,6 +150,10 @@ void USBManager::executeHIDCommand(const HIDMessage& command) {
   if (!usbConnected) {
     DEBUG_PRINTLN("WARNING: HID command rejected USB not connected");
     return;
+  }
+
+  if (systemManager) {
+    systemManager->notifyActivity();
   }
 
   DEBUG_PRINTF("Executing HID command: %d, key: %d, x: %d, y: %d, buttons: %d\n",

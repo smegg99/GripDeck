@@ -40,6 +40,9 @@ enum BLECommand {
 
   BLE_CMD_HID_SYSTEM_POWER,         // HID_SYSTEM_POWER -> WAS_SUCCESSFUL
   BLE_CMD_GET_SYSTEM_INFO,          // GET_SYSTEM_INFO -> SYSTEM_INFO|WIFI_MAC|BLUETOOTH_MAC|FIRMWARE_VERSION|UPTIME
+  BLE_CMD_DEEP_SLEEP_STATUS,        // DEEP_SLEEP_STATUS -> ENABLED|TIME_UNTIL_SLEEP_MS
+  BLE_CMD_DEEP_SLEEP_ENABLE,        // DEEP_SLEEP_ENABLE -> WAS_SUCCESSFUL
+  BLE_CMD_DEEP_SLEEP_DISABLE,       // DEEP_SLEEP_DISABLE -> WAS_SUCCESSFUL
   BLE_CMD_HELP,                     // HELP -> COMMAND_LIST
   BLE_CMD_SYNTAX_ERROR,             // Syntax error in command
   BLE_CMD_UNKNOWN                   // Unknown command
@@ -69,6 +72,9 @@ static const struct {
   {"HID_GAMEPAD_LEFT_AXIS", BLE_CMD_HID_GAMEPAD_LEFT_AXIS},
   {"HID_SYSTEM_POWER", BLE_CMD_HID_SYSTEM_POWER},
   {"GET_SYSTEM_INFO", BLE_CMD_GET_SYSTEM_INFO},
+  {"DEEP_SLEEP_STATUS", BLE_CMD_DEEP_SLEEP_STATUS},
+  {"DEEP_SLEEP_ENABLE", BLE_CMD_DEEP_SLEEP_ENABLE},
+  {"DEEP_SLEEP_DISABLE", BLE_CMD_DEEP_SLEEP_DISABLE},
   {"HELP", BLE_CMD_HELP}
 };
 
@@ -81,6 +87,9 @@ static const char* BLE_HELP_STRING =
 "POWER_OFF - Turn off SBC power\n"
 "SHUTDOWN - Shutdown system\n"
 "GET_SYSTEM_INFO - Get system information\n"
+"DEEP_SLEEP_STATUS - Get deep sleep status\n"
+"DEEP_SLEEP_ENABLE - Enable deep sleep watchdog\n"
+"DEEP_SLEEP_DISABLE - Disable deep sleep watchdog\n"
 "\n"
 "=== HID Keyboard Commands ===\n"
 "HID_KEYBOARD_PRESS:KEY - Press and release key (ASCII code)\n"

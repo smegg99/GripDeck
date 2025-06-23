@@ -7,17 +7,34 @@
 class SystemManager {
 private:
   void checkPowerButton();
+  void updateDeepSleepWatchdog();
+  void resetActivityTimer();
+  void enterDeepSleep();
+  bool shouldEnterDeepSleep();
 
   uint32_t lastButtonTime;
   bool lastButtonState;
   bool buttonPressed;
   uint32_t buttonPressStartTime;
+
+  // Deep sleep watchdog timer
+  uint32_t lastActivityTime;
+  uint32_t lastActivityCheck;
+  bool deepSleepEnabled;
+
 public:
   SystemManager();
   ~SystemManager();
 
   bool begin();
   void update();
+  void notifyActivity();
+  void notifyWakeFromDeepSleep();
+
+  void enableDeepSleep();
+  void disableDeepSleep();
+  bool isDeepSleepEnabled() const;
+  uint32_t getTimeUntilDeepSleep() const;
 
   const char* getSystemInfo() const;
 };

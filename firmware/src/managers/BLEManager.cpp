@@ -462,6 +462,28 @@ void BLEManager::handleCommand(const BLEMessage& message) {
     sendResponse(systemManager->getSystemInfo());
     break;
 
+  case BLE_CMD_DEEP_SLEEP_STATUS: {
+    DEBUG_PRINTLN("Getting deep sleep status");
+    char statusBuffer[64];
+    const char* enabledStr = systemManager->isDeepSleepEnabled() ? "ENABLED" : "DISABLED";
+    uint32_t timeUntilSleep = systemManager->getTimeUntilDeepSleep();
+    snprintf(statusBuffer, sizeof(statusBuffer), "DEEP_SLEEP_STATUS|%s|%lu", enabledStr, timeUntilSleep);
+    sendResponse(statusBuffer);
+    break;
+  }
+
+  case BLE_CMD_DEEP_SLEEP_ENABLE:
+    DEBUG_PRINTLN("Enabling deep sleep watchdog");
+    systemManager->enableDeepSleep();
+    sendResponse(BLE_CMD_WAS_SUCCESSFUL);
+    break;
+
+  case BLE_CMD_DEEP_SLEEP_DISABLE:
+    DEBUG_PRINTLN("Disabling deep sleep watchdog");
+    systemManager->disableDeepSleep();
+    sendResponse(BLE_CMD_WAS_SUCCESSFUL);
+    break;
+
   case BLE_CMD_HELP:
     sendResponse(BLE_HELP_STRING);
     break;
@@ -483,6 +505,10 @@ void BLEManager::ServerCallbacks::onDisconnect(BLEServer* server) {
 void BLEManager::CharacteristicCallbacks::onWrite(BLECharacteristic* characteristic) {
   std::string stdValue = characteristic->getValue();
   if (stdValue.length() > 0 && stdValue.length() < 128) {
+    if (systemManager) {
+      systemManager->notifyActivity();
+    }
+
     BLEMessage message; // Will be filled with data later
     strncpy(message.rawData, stdValue.c_str(), sizeof(message.rawData) - 1);
     message.rawData[sizeof(message.rawData) - 1] = '\0';
