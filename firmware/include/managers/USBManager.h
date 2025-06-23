@@ -5,6 +5,7 @@
 #include <USBHIDKeyboard.h>
 #include <USBHIDMouse.h>
 #include <USBHIDGamepad.h>
+#include <USBHIDConsumerControl.h>
 #include <USB.h>
 
 enum HIDCommand {
@@ -49,6 +50,7 @@ private:
   USBHIDKeyboard keyboard;
   USBHIDMouse mouse;
   USBHIDGamepad gamepad;
+  USBHIDConsumerControl consumerControl;
 
   bool usbConnected = false;
 

@@ -111,6 +111,9 @@ bool USBManager::begin() {
   gamepad.begin();
   DEBUG_PRINTLN("USB gamepad initialized");
 
+  consumerControl.begin();
+  DEBUG_PRINTLN("USB consumer control initialized");
+
   usbConnected = false;
 
   // Check if USB is already connected on startup after a longer delay
@@ -238,9 +241,14 @@ void USBManager::executeHIDCommand(const HIDMessage& command) {
     break;
 
   case HID_MOUSE_SCROLL:
+  {
     DEBUG_PRINTF("Mouse: Scrolling by x=%d, y=%d\n", command.x, command.y);
-    mouse.move(0, 0, command.x, command.y);
+    int8_t horizontal = (command.x > 127) ? 127 : (command.x < -128) ? -128 : (int8_t)command.x;
+    int8_t vertical = (command.y > 127) ? 127 : (command.y < -128) ? -128 : (int8_t)command.y;
+    mouse.move(0, 0, vertical, horizontal);
+    DEBUG_PRINTF("Mouse: Scroll executed - vertical: %d, horizontal: %d\n", vertical, horizontal);
     break;
+  }
 
   case HID_GAMEPAD_PRESS:
     DEBUG_PRINTF("Gamepad: Pressing button %d\n", command.key);
@@ -296,11 +304,10 @@ void USBManager::executeHIDCommand(const HIDMessage& command) {
     break;
 
   case HID_SYSTEM_POWER:
-    DEBUG_PRINTLN("System: Sending HID System Power Down key (0x81)");
-    keyboard.press(0x81);
+    DEBUG_PRINTLN("System: Sending HID Consumer Control Power key");
+    consumerControl.press(CONSUMER_CONTROL_POWER);
     delay(200);
-    keyboard.release(0x81);
-    keyboard.releaseAll();
+    consumerControl.release();
     break;
 
   default:
@@ -371,7 +378,7 @@ bool USBManager::sendKeyRelease(uint8_t key) {
 bool USBManager::typeText(const char* text) {
   if (!text || strlen(text) == 0) return false;
 
-  HIDMessage message = {}; 
+  HIDMessage message = {};
   message.command = HID_KEYBOARD_TYPE;
   message.key = 0;
   message.x = 0;
