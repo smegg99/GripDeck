@@ -12,24 +12,33 @@ USBManager::USBManager() {
   instance = this;
 }
 
-void USBManager::staticEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
+void USBManager::staticEventHandler(arduino_usb_event_t event, void* event_data) {
   if (instance) {
-    instance->handleEvent(event_base, event_id, event_data);
+    instance->handleUSBEvent(event, event_data);
   }
 }
 
-void USBManager::handleEvent(esp_event_base_t event_base, int32_t event_id, void* event_data) {
-  switch (event_id) {
-  case ARDUINO_HW_CDC_CONNECTED_EVENT:
-    DEBUG_PRINTLN("USB device connected");
+void USBManager::handleUSBEvent(arduino_usb_event_t event, void* event_data) {
+  switch (event) {
+  case ARDUINO_USB_STARTED_EVENT:
+    DEBUG_PRINTLN("USB device enumerated by host");
     usbConnected = true;
     break;
-  case ARDUINO_HW_CDC_BUS_RESET_EVENT:
-    DEBUG_PRINTLN("USB device disconnected");
+  case ARDUINO_USB_STOPPED_EVENT:
+    DEBUG_PRINTLN("USB device disconnected from host");
     usbConnected = false;
     break;
+  case ARDUINO_USB_SUSPEND_EVENT:
+    DEBUG_PRINTLN("USB device suspended");
+    // Don't change connection state - device is still enumerated
+    break;
+  case ARDUINO_USB_RESUME_EVENT:
+    DEBUG_PRINTLN("USB device resumed");
+    // Device was already connected, just resumed
+    usbConnected = true;
+    break;
   default:
-    DEBUG_VERBOSE_PRINTF("Unknown USB event: %d\n", event_id);
+    DEBUG_VERBOSE_PRINTF("Unknown USB event: %d\n", event);
   }
 }
 
@@ -48,7 +57,9 @@ USBManager::~USBManager() {
 bool USBManager::begin() {
   DEBUG_PRINTLN("Initializing USBManager...");
 
-  hidQueue = xQueueCreate(10, sizeof(uint8_t));
+  DEBUG_PRINTF("HIDMessage size: %d bytes\n", sizeof(HIDMessage));
+
+  hidQueue = xQueueCreate(10, sizeof(HIDMessage));
   if (!hidQueue) {
     DEBUG_PRINTLN("ERROR: Failed to create HID queue");
     return false;
@@ -79,9 +90,6 @@ bool USBManager::begin() {
     return false;
   }
 
-  // USB.onEvent(staticEventHandler);
-  esp_event_handler_register(ARDUINO_HW_CDC_EVENTS, ESP_EVENT_ANY_ID, staticEventHandler, NULL);
-
   DEBUG_PRINTLN("USB subsystem initialized, configuring HID devices...");
 
   delay(500);
@@ -105,23 +113,31 @@ bool USBManager::begin() {
 
   usbConnected = false;
 
+  // Check if USB is already connected on startup after a longer delay
+  // This prevents crashes during early initialization
+  delay(1000);
+  checkInitialUSBStatus();
+
   DEBUG_PRINTLN("USBManager initialized successfully");
+
   return true;
 }
 
 void USBManager::update() {
-  if (!usbConnected) {
-    DEBUG_PRINTLN("USB not connected, skipping update");
-    return;
+  bool currentStatus = false;
+
+  if (millis() > 5000) {
+    currentStatus = tud_mounted();
   }
 
-  if (millis() - lastUpdateTime < TASK_INTERVAL_USB) {
-    return;
+  if (currentStatus != usbConnected) {
+    DEBUG_PRINTF("USB status change detected: %s -> %s\n",
+      usbConnected ? "Connected" : "Disconnected",
+      currentStatus ? "Connected" : "Disconnected");
+    usbConnected = currentStatus;
   }
 
   processHIDCommands();
-
-  lastUpdateTime = millis();
 }
 
 void USBManager::executeHIDCommand(const HIDMessage& command) {
@@ -130,7 +146,8 @@ void USBManager::executeHIDCommand(const HIDMessage& command) {
     return;
   }
 
-  DEBUG_PRINTF("Executing HID command: %d, key: %d\n", command.command, command.key);
+  DEBUG_PRINTF("Executing HID command: %d, key: %d, x: %d, y: %d, buttons: %d\n",
+    command.command, command.key, command.x, command.y, command.buttons);
 
   if (!xSemaphoreTake(hidMutex, pdMS_TO_TICKS(100))) {
     DEBUG_PRINTLN("Failed to acquire HID mutex");
@@ -139,12 +156,18 @@ void USBManager::executeHIDCommand(const HIDMessage& command) {
 
   switch (command.command) {
   case HID_KEYBOARD_PRESS:
-    DEBUG_PRINTF("Keyboard: Pressing key code %d\n", command.key);
+    DEBUG_PRINTF("Keyboard: Processing key press for key code %d\n", command.key);
 
-    if (command.key == 0 || command.key > 255) {
-      DEBUG_PRINTF("Invalid key code: %d\n", command.key);
+    if (command.key == 0) {
+      DEBUG_PRINTF("ERROR: Invalid key code: %d (key is 0!)\n", command.key);
       break;
     }
+    if (command.key > 255) {
+      DEBUG_PRINTF("ERROR: Invalid key code: %d (key > 255)\n", command.key);
+      break;
+    }
+
+    DEBUG_PRINTF("Keyboard: Pressing key code %d\n", command.key);
     keyboard.press(command.key);
     DEBUG_PRINTF("Key %d pressed\n", command.key);
 
@@ -154,6 +177,16 @@ void USBManager::executeHIDCommand(const HIDMessage& command) {
 
     keyboard.releaseAll();
     DEBUG_PRINTLN("Keyboard HID report sent");
+    break;
+
+  case HID_KEYBOARD_HOLD:
+    DEBUG_PRINTF("Keyboard: Holding key code %d\n", command.key);
+    if (command.key == 0 || command.key > 255) {
+      DEBUG_PRINTF("Invalid key code: %d\n", command.key);
+      break;
+    }
+    keyboard.press(command.key);
+    DEBUG_PRINTF("Holding key %d \n", command.key);
     break;
 
   case HID_KEYBOARD_RELEASE:
@@ -171,11 +204,37 @@ void USBManager::executeHIDCommand(const HIDMessage& command) {
     mouse.move(command.x, command.y);
     break;
 
-  case HID_MOUSE_CLICK:
-    DEBUG_PRINTF("Mouse: Clicking buttons %d\n", command.buttons);
-    if (command.buttons & 0x01) mouse.click(MOUSE_LEFT);
-    if (command.buttons & 0x02) mouse.click(MOUSE_RIGHT);
-    if (command.buttons & 0x04) mouse.click(MOUSE_MIDDLE);
+  case HID_MOUSE_PRESS:
+    DEBUG_PRINTF("Mouse: Pressing buttons %d\n", command.buttons);
+    if (command.buttons & 0x01) {
+      mouse.press(MOUSE_LEFT);
+      delay(USB_HID_MOUSE_PRESS_DELAY);
+      mouse.release(MOUSE_LEFT);
+    }
+    if (command.buttons & 0x02) {
+      mouse.press(MOUSE_RIGHT);
+      delay(USB_HID_MOUSE_PRESS_DELAY);
+      mouse.release(MOUSE_RIGHT);
+    }
+    if (command.buttons & 0x04) {
+      mouse.press(MOUSE_MIDDLE);
+      delay(USB_HID_MOUSE_PRESS_DELAY);
+      mouse.release(MOUSE_MIDDLE);
+    }
+    break;
+
+  case HID_MOUSE_HOLD:
+    DEBUG_PRINTF("Mouse: Holding buttons %d\n", command.buttons);
+    if (command.buttons & 0x01) mouse.press(MOUSE_LEFT);
+    if (command.buttons & 0x02) mouse.press(MOUSE_RIGHT);
+    if (command.buttons & 0x04) mouse.press(MOUSE_MIDDLE);
+    break;
+
+  case HID_MOUSE_RELEASE:
+    DEBUG_PRINTF("Mouse: Releasing buttons %d\n", command.buttons);
+    if (command.buttons & 0x01) mouse.release(MOUSE_LEFT);
+    if (command.buttons & 0x02) mouse.release(MOUSE_RIGHT);
+    if (command.buttons & 0x04) mouse.release(MOUSE_MIDDLE);
     break;
 
   case HID_MOUSE_SCROLL:
@@ -183,14 +242,57 @@ void USBManager::executeHIDCommand(const HIDMessage& command) {
     mouse.move(0, 0, command.x, command.y);
     break;
 
-  case HID_GAMEPAD_BUTTON:
-    DEBUG_PRINTF("Gamepad: Button %d, pressed: %s\n", command.key, (command.buttons & 0x80) ? "true" : "false");
-    // TODO: Implement this
+  case HID_GAMEPAD_PRESS:
+    DEBUG_PRINTF("Gamepad: Pressing button %d\n", command.key);
+    if (command.key == 0 || command.key > 16) {
+      DEBUG_PRINTF("Invalid gamepad button: %d\n", command.key);
+      break;
+    }
+    gamepad.pressButton(command.key);
+    delay(USB_HID_GAMEPAD_PRESS_DELAY);
+    gamepad.releaseButton(command.key);
     break;
 
-  case HID_GAMEPAD_AXIS:
-    DEBUG_PRINTF("Gamepad: Axis movement (%d, %d)\n", command.x, command.y);
-    // TODO: Implement this
+  case HID_GAMEPAD_HOLD:
+    DEBUG_PRINTF("Gamepad: Holding button %d\n", command.key);
+    if (command.key == 0 || command.key > 16) {
+      DEBUG_PRINTF("Invalid gamepad button: %d\n", command.key);
+      break;
+    }
+    gamepad.pressButton(command.key);
+    break;
+
+  case HID_GAMEPAD_RELEASE:
+    DEBUG_PRINTF("Gamepad: Releasing button %d\n", command.key);
+    if (command.key == 0 || command.key > 16) {
+      DEBUG_PRINTF("Invalid gamepad button: %d\n", command.key);
+      break;
+    }
+    gamepad.releaseButton(command.key);
+    break;
+
+  case HID_GAMEPAD_BUTTON:
+    DEBUG_PRINTF("Gamepad: Button %d, pressed: %s\n", command.key, (command.buttons & 0x80) ? "true" : "false");
+    if (command.key == 0 || command.key > 16) {
+      DEBUG_PRINTF("Invalid gamepad button: %d\n", command.key);
+      break;
+    }
+    if (command.buttons & 0x80) {
+      gamepad.pressButton(command.key);
+    }
+    else {
+      gamepad.releaseButton(command.key);
+    }
+    break;
+
+  case HID_GAMEPAD_AXIS_RIGHT:
+    DEBUG_PRINTF("Gamepad: Right axis movement (%d, %d)\n", command.x, command.y);
+    gamepad.rightStick(command.x, command.y);
+    break;
+
+  case HID_GAMEPAD_AXIS_LEFT:
+    DEBUG_PRINTF("Gamepad: Left axis movement (%d, %d)\n", command.x, command.y);
+    gamepad.leftStick(command.x, command.y);
     break;
 
   case HID_SYSTEM_POWER:
@@ -199,7 +301,6 @@ void USBManager::executeHIDCommand(const HIDMessage& command) {
     delay(200);
     keyboard.release(0x81);
     keyboard.releaseAll();
-    DEBUG_PRINTLN("HID System Power Down key sent");
     break;
 
   default:
@@ -215,6 +316,9 @@ void USBManager::processHIDCommands() {
   HIDMessage message;
 
   while (xQueueReceive(hidQueue, &message, 0) == pdTRUE) {
+    DEBUG_PRINTF("=== Processing HID command from queue ===\n");
+    DEBUG_PRINTF("Command: %d, Key: %d, X: %d, Y: %d, Buttons: %d, Text: '%s'\n",
+      message.command, message.key, message.x, message.y, message.buttons, message.text);
     executeHIDCommand(message);
   }
 }
@@ -222,11 +326,29 @@ void USBManager::processHIDCommands() {
 bool USBManager::sendKeyPress(uint8_t key) {
   if (!isValidKey(key)) return false;
 
-  HIDMessage message = {
-      .command = HID_KEYBOARD_PRESS,
-      .key = key,
-      .timestamp = millis()
-  };
+  HIDMessage message = {};
+  message.command = HID_KEYBOARD_PRESS;
+  message.key = key;
+  message.x = 0;
+  message.y = 0;
+  message.buttons = 0;
+  message.text[0] = '\0';
+  message.timestamp = millis();
+
+  return xQueueSend(hidQueue, &message, 0) == pdTRUE;
+}
+
+bool USBManager::sendKeyHold(uint8_t key) {
+  if (!isValidKey(key)) return false;
+
+  HIDMessage message = {};
+  message.command = HID_KEYBOARD_HOLD;
+  message.key = key;
+  message.x = 0;
+  message.y = 0;
+  message.buttons = 0;
+  message.text[0] = '\0';
+  message.timestamp = millis();
 
   return xQueueSend(hidQueue, &message, 0) == pdTRUE;
 }
@@ -234,22 +356,14 @@ bool USBManager::sendKeyPress(uint8_t key) {
 bool USBManager::sendKeyRelease(uint8_t key) {
   if (!isValidKey(key)) return false;
 
-  HIDMessage message = {
-      .command = HID_KEYBOARD_RELEASE,
-      .key = key,
-      .timestamp = millis()
-  };
-
-  return xQueueSend(hidQueue, &message, 0) == pdTRUE;
-}
-
-bool USBManager::sendKeyboard(uint8_t modifier, uint8_t key) {
-  HIDMessage message = {
-      .command = HID_KEYBOARD_PRESS,
-      .key = key,
-      .buttons = modifier,
-      .timestamp = millis()
-  };
+  HIDMessage message = {};
+  message.command = HID_KEYBOARD_RELEASE;
+  message.key = key;
+  message.x = 0;
+  message.y = 0;
+  message.buttons = 0;
+  message.text[0] = '\0';
+  message.timestamp = millis();
 
   return xQueueSend(hidQueue, &message, 0) == pdTRUE;
 }
@@ -257,10 +371,13 @@ bool USBManager::sendKeyboard(uint8_t modifier, uint8_t key) {
 bool USBManager::typeText(const char* text) {
   if (!text || strlen(text) == 0) return false;
 
-  HIDMessage message = {
-      .command = HID_KEYBOARD_TYPE,
-      .timestamp = millis()
-  };
+  HIDMessage message = {}; 
+  message.command = HID_KEYBOARD_TYPE;
+  message.key = 0;
+  message.x = 0;
+  message.y = 0;
+  message.buttons = 0;
+  message.timestamp = millis();
 
   strncpy(message.text, text, sizeof(message.text) - 1);
   message.text[sizeof(message.text) - 1] = '\0';
@@ -269,45 +386,111 @@ bool USBManager::typeText(const char* text) {
 }
 
 bool USBManager::sendMouseMove(int16_t x, int16_t y) {
-  HIDMessage message = {
-      .command = HID_MOUSE_MOVE,
-      .x = x,
-      .y = y,
-      .timestamp = millis()
-  };
+  HIDMessage message = {};
+  message.command = HID_MOUSE_MOVE;
+  message.key = 0;
+  message.x = x;
+  message.y = y;
+  message.buttons = 0;
+  message.text[0] = '\0';
+  message.timestamp = millis();
 
   return xQueueSend(hidQueue, &message, 0) == pdTRUE;
 }
 
-bool USBManager::sendMouseClick(uint8_t button) {
+bool USBManager::sendMousePress(uint8_t button) {
   if (!isValidMouseButton(button)) return false;
 
-  HIDMessage message = {
-      .command = HID_MOUSE_CLICK,
-      .buttons = button,
-      .timestamp = millis()
-  };
+  HIDMessage message = {};
+  message.command = HID_MOUSE_PRESS;
+  message.key = 0;
+  message.x = 0;
+  message.y = 0;
+  message.buttons = button;
+  message.text[0] = '\0';
+  message.timestamp = millis();
 
   return xQueueSend(hidQueue, &message, 0) == pdTRUE;
 }
 
-bool USBManager::sendMouseScroll(int8_t scroll) {
-  HIDMessage message = {
-      .command = HID_MOUSE_SCROLL,
-      .x = scroll,
-      .timestamp = millis()
-  };
+bool USBManager::sendMouseHold(uint8_t button) {
+  if (!isValidMouseButton(button)) return false;
+
+  HIDMessage message = {};
+  message.command = HID_MOUSE_HOLD;
+  message.key = 0;
+  message.x = 0;
+  message.y = 0;
+  message.buttons = button;
+  message.text[0] = '\0';
+  message.timestamp = millis();
+
+  return xQueueSend(hidQueue, &message, 0) == pdTRUE;
+}
+
+bool USBManager::sendMouseRelease(uint8_t button) {
+  if (!isValidMouseButton(button)) return false;
+
+  HIDMessage message = {};
+  message.command = HID_MOUSE_RELEASE;
+  message.key = 0;
+  message.x = 0;
+  message.y = 0;
+  message.buttons = button;
+  message.text[0] = '\0';
+  message.timestamp = millis();
+
+  return xQueueSend(hidQueue, &message, 0) == pdTRUE;
+}
+
+bool USBManager::sendMouseScroll(int16_t x, int16_t y) {
+  HIDMessage message = {};
+  message.command = HID_MOUSE_SCROLL;
+  message.key = 0;
+  message.x = x;
+  message.y = y;
+  message.buttons = 0;
+  message.text[0] = '\0';
+  message.timestamp = millis();
 
   return xQueueSend(hidQueue, &message, 0) == pdTRUE;
 }
 
 bool USBManager::sendGamepadButton(uint8_t button, bool pressed) {
-  HIDMessage message = {
-      .command = HID_GAMEPAD_BUTTON,
-      .key = button,
-      .buttons = static_cast<uint8_t>(pressed ? 0x80 : 0x00),
-      .timestamp = millis()
-  };
+  HIDMessage message = {};
+  message.command = HID_GAMEPAD_BUTTON;
+  message.key = button;
+  message.x = 0;
+  message.y = 0;
+  message.buttons = static_cast<uint8_t>(pressed ? 0x80 : 0x00);
+  message.text[0] = '\0';
+  message.timestamp = millis();
+
+  return xQueueSend(hidQueue, &message, 0) == pdTRUE;
+}
+
+bool USBManager::sendGamepadRightAxis(int16_t x, int16_t y) {
+  HIDMessage message = {};
+  message.command = HID_GAMEPAD_AXIS_RIGHT;
+  message.key = 0;
+  message.x = x;
+  message.y = y;
+  message.buttons = 0;
+  message.text[0] = '\0';
+  message.timestamp = millis();
+
+  return xQueueSend(hidQueue, &message, 0) == pdTRUE;
+}
+
+bool USBManager::sendGamepadLeftAxis(int16_t x, int16_t y) {
+  HIDMessage message = {};
+  message.command = HID_GAMEPAD_AXIS_LEFT;
+  message.key = 0;
+  message.x = x;
+  message.y = y;
+  message.buttons = 0;
+  message.text[0] = '\0';
+  message.timestamp = millis();
 
   return xQueueSend(hidQueue, &message, 0) == pdTRUE;
 }
@@ -315,11 +498,14 @@ bool USBManager::sendGamepadButton(uint8_t button, bool pressed) {
 bool USBManager::sendSystemPowerKey() {
   DEBUG_PRINTLN("Sending system power key");
 
-  HIDMessage message = {
-      .command = HID_SYSTEM_POWER,
-      .key = 0,
-      .timestamp = millis()
-  };
+  HIDMessage message = {};
+  message.command = HID_SYSTEM_POWER;
+  message.key = 0;
+  message.x = 0;
+  message.y = 0;
+  message.buttons = 0;
+  message.text[0] = '\0';
+  message.timestamp = millis();
 
   return xQueueSend(hidQueue, &message, 0) == pdTRUE;
 }
@@ -371,4 +557,16 @@ bool USBManager::isValidKey(uint8_t key) {
 
 bool USBManager::isValidMouseButton(uint8_t button) {
   return button > 0 && button <= 7;
+}
+
+void USBManager::checkInitialUSBStatus() {
+  DEBUG_PRINTLN("Checking initial USB connection status...");
+
+  delay(1000);
+  usbConnected = false;
+  if (millis() > 5000) {
+    usbConnected = tud_mounted();
+  }
+
+  DEBUG_PRINTF("Initial USB connection status: %s\n", usbConnected ? "Connected" : "Disconnected");
 }

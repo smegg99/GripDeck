@@ -38,11 +38,6 @@ bool PowerManager::begin() {
 }
 
 void PowerManager::update() {
-  // Don't update too frequently to avoid I2C bus issues
-  if (millis() - lastUpdateTime < TASK_INTERVAL_POWER) {
-    return;
-  }
-
   BatteryData batteryData;
   ChargerData chargerData;
 
@@ -50,8 +45,6 @@ void PowerManager::update() {
   setPowerData(batteryData, chargerData);
 
   DEBUG_PRINTLN(powerData.toString());
-
-  lastUpdateTime = millis();
 }
 
 void PowerManager::trySetSBCPower(bool on) {
@@ -61,7 +54,7 @@ void PowerManager::trySetSBCPower(bool on) {
 
     unsigned long startTime = millis();
     while (!usbManager->isUSBConnected() && millis() - startTime < USB_CONNECTION_TIMEOUT) {
-      vTaskDelay(pdMS_TO_TICKS(100));
+      delay(100);
     }
 
     if (usbManager->isUSBConnected()) {

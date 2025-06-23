@@ -9,6 +9,8 @@
 #include <freertos/timers.h>
 #include <freertos/semphr.h>
 
+#define FIRMWARE_VERSION 0x0100
+
 // Hardware Pin Definitions
 #define PIN_SBC_POWER_MOSFET    6   // GP6 - SBC power mosfet (5V relay control)
 #define PIN_LED_POWER_MOSFET    7   // GP7 - LEDs power mosfet (brightness control)
@@ -57,7 +59,8 @@
 #define USB_HID_TIMEOUT         15000   // USB HID timeout in ms - shutdown SBC if no activity (reduced for faster response)
 #define USB_HID_PING_INTERVAL   5000    // USB HID ping interval in ms (reduced for faster detection)
 #define USB_HID_KEYBOARD_PRESS_DELAY 50 // Delay after pressing a key before releasing it (ms)
-
+#define USB_HID_MOUSE_PRESS_DELAY    50 // Delay after pressing a mouse button before releasing it (ms)
+#define USB_HID_GAMEPAD_PRESS_DELAY  50 // Delay after pressing a gamepad button before releasing it (ms)
 // Power Button Configuration
 #define POWER_BUTTON_SHORT_PRESS_MIN    50      // Minimum time for valid button press (ms)
 #define POWER_BUTTON_SHORT_PRESS_MAX    2000    // Maximum time for soft shutdown (ms)
@@ -75,10 +78,12 @@
 #define LED_PWM_CHANNEL         0       // PWM channel for MOSFET control
 
 // FreeRTOS Task Configuration
-#define TASK_STACK_SIZE_SMALL   3072    // Increased from 2048
-#define TASK_STACK_SIZE_MEDIUM  6144    // Increased from 4096  
-#define TASK_STACK_SIZE_LARGE   10240   // Increased from 8192
+#define TASK_STACK_SIZE_SMALL        3072
+#define TASK_STACK_SIZE_MEDIUM       6144
+#define TASK_STACK_SIZE_LARGE        10240
+#define TASK_STACK_SIZE_EXTRA_LARGE  16384
 
+#define TASK_WATCHDOG_TIMEOUT        30
 // Task Priorities (0 = lowest, 25 = highest, avoid priority 1 which is used by idle task)
 #define TASK_PRIORITY_IDLE      0
 #define TASK_PRIORITY_LOW       2
@@ -90,6 +95,7 @@
 #define TASK_INTERVAL_POWER     1000     // Power management task
 #define TASK_INTERVAL_SYSTEM    100      // Communication tasks
 #define TASK_INTERVAL_USB       100      // USB HID task
+#define TASK_INTERVAL_BLE       100      // BLE task
 
 // Power Management Timeouts
 #define SLEEP_TIMEOUT_MS        300000  // 5 minutes idle before sleep
@@ -105,6 +111,11 @@
 #define BLE_SERVICE_UUID        "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
 #define BLE_CHARACTERISTIC_TX_UUID "6E400003-B5A3-F393-E0A9-E50E24DCCA9E" // TX characteristic (device to client)
 #define BLE_CHARACTERISTIC_RX_UUID "6E400002-B5A3-F393-E0A9-E50E24DCCA9E" // RX characteristic (client to device)
+
+#define BLE_CMD_PART_SEPARATOR  ":"
+#define BLE_CMD_DATA_SEPARATOR  "|"
+#define BLE_CMD_WAS_SUCCESSFUL  "1"
+#define BLE_CMD_WAS_FAILURE     "0"
 
 // Wake-up pin configuration
 #define WAKE_UP_PIN_MASK        (1ULL << PIN_POWER_BUTTON) | (1ULL << PIN_POWER_INPUT_DETECT)

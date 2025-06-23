@@ -5,16 +5,24 @@
 #include <USBHIDKeyboard.h>
 #include <USBHIDMouse.h>
 #include <USBHIDGamepad.h>
+#include <USB.h>
 
 enum HIDCommand {
   HID_KEYBOARD_PRESS,
+  HID_KEYBOARD_HOLD,
   HID_KEYBOARD_RELEASE,
   HID_KEYBOARD_TYPE,
   HID_MOUSE_MOVE,
-  HID_MOUSE_CLICK,
+  HID_MOUSE_PRESS,
+  HID_MOUSE_HOLD,
+  HID_MOUSE_RELEASE,
   HID_MOUSE_SCROLL,
+  HID_GAMEPAD_PRESS,
+  HID_GAMEPAD_HOLD,
+  HID_GAMEPAD_RELEASE,
   HID_GAMEPAD_BUTTON,
-  HID_GAMEPAD_AXIS,
+  HID_GAMEPAD_AXIS_RIGHT,
+  HID_GAMEPAD_AXIS_LEFT,
   HID_SYSTEM_POWER,
   HID_STATUS_REPORT
 };
@@ -47,14 +55,13 @@ private:
   QueueHandle_t hidQueue;
   SemaphoreHandle_t hidMutex;
 
-  uint32_t lastUpdateTime = 0;
-
   static USBManager* instance;
 
-  static void staticEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
-  void handleEvent(esp_event_base_t event_base, int32_t event_id, void* event_data);
+  static void staticEventHandler(arduino_usb_event_t event, void* event_data);
+  void handleUSBEvent(arduino_usb_event_t event, void* event_data);
   void processHIDCommands();
   void executeHIDCommand(const HIDMessage& command);
+  void checkInitialUSBStatus();
 
   bool isValidKey(uint8_t key);
   bool isValidMouseButton(uint8_t button);
@@ -66,18 +73,24 @@ public:
   void update();
 
   bool sendKeyPress(uint8_t key);
+  bool sendKeyHold(uint8_t key);
   bool sendKeyRelease(uint8_t key);
-  bool sendKeyboard(uint8_t modifier, uint8_t key);
   bool typeText(const char* text);
 
   bool sendMouseMove(int16_t x, int16_t y);
-  bool sendMouseClick(uint8_t button);
-  bool sendMouseScroll(int8_t scroll);
+  bool sendMousePress(uint8_t button);
+  bool sendMouseHold(uint8_t button);
+  bool sendMouseRelease(uint8_t button);
+  bool sendMouseScroll(int16_t x, int16_t y);
 
   bool sendGamepadButton(uint8_t button, bool pressed);
-  bool sendGamepadAxis(uint8_t axis, int16_t value);
+  bool sendGamepadRightAxis(int16_t x, int16_t y);
+  bool sendGamepadLeftAxis(int16_t x, int16_t y);
 
   bool sendSystemPowerKey();
+
+  // This uses a custom protocol to send system status reports
+  // TODO: Implement this
   bool sendStatusReport(const SystemStatus& status);
 
   bool isUSBConnected() const { return usbConnected; }

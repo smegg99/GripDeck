@@ -70,8 +70,6 @@ private:
 
   SemaphoreHandle_t powerDataMutex = nullptr;
 
-  uint32_t lastUpdateTime = 0;
-
   bool ledsEnabled = false;
 
   void setPowerData(BatteryData battery, ChargerData charger) {
@@ -110,6 +108,10 @@ public:
   }
 
   void trySetSBCPower(bool on);
+  void forceSetSBCPower(bool on) {
+    digitalWrite(PIN_SBC_POWER_MOSFET, on ? HIGH : LOW);
+  }
+  
   bool isSBCPowerOn() const {
     return digitalRead(PIN_SBC_POWER_MOSFET) == HIGH;
   }

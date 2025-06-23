@@ -6,6 +6,7 @@
     "memory": "cpp",
     "functional": "cpp",
     "type_traits": "cpp",
-    "system_error": "cpp"
+    "system_error": "cpp",
+    "cstdint": "cpp"
   }
 }
