@@ -2,6 +2,8 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <esp_task_wdt.h>
+#include <esp_sleep.h>
+#include <driver/rtc_io.h>
 #include "utils/DebugSerial.h"
 #include "config/Config.h"
 #include "managers/PowerManager.h"
@@ -31,21 +33,24 @@ void initializeHardware() {
 
   pinMode(PIN_SBC_POWER_MOSFET, OUTPUT);
   pinMode(PIN_LED_POWER_MOSFET, OUTPUT);
-  pinMode(PIN_POWER_BUTTON, INPUT_PULLUP);
-  pinMode(PIN_POWER_INPUT_DETECT, INPUT_PULLUP);
+
+  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+  if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1) {
+    DEBUG_PRINTLN("Reconfiguring wake-up pins from RTC domain to regular GPIO");
+    rtc_gpio_deinit((gpio_num_t)PIN_POWER_BUTTON);
+    rtc_gpio_deinit((gpio_num_t)PIN_POWER_INPUT_DETECT);
+  }
+
+  pinMode(PIN_POWER_BUTTON, INPUT);
+  pinMode(PIN_POWER_INPUT_DETECT, INPUT);
 
   digitalWrite(PIN_SBC_POWER_MOSFET, LOW);
   digitalWrite(PIN_LED_POWER_MOSFET, LOW);
-
   DEBUG_PRINTLN("GPIO pins configured");
 
   ledcSetup(LED_PWM_CHANNEL, LED_PWM_FREQUENCY, LED_PWM_RESOLUTION);
   ledcAttachPin(PIN_LED_POWER_MOSFET, LED_PWM_CHANNEL);
-  DEBUG_PRINTLN("PWM configured");
-
-  // Configure wake-up sources (using WAKE_UP_PIN_MASK from config)
-  esp_sleep_enable_ext1_wakeup(WAKE_UP_PIN_MASK, ESP_EXT1_WAKEUP_ANY_LOW);
-  DEBUG_PRINTF("Wake-up sources configured with mask: 0x%llX\n", WAKE_UP_PIN_MASK);
+  DEBUG_PRINTLN("LED PWM configured");
 
   Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
   Wire.setClock(100000);
@@ -54,7 +59,18 @@ void initializeHardware() {
 
 void setup() {
   Serial.begin(115200);
-  while (!Serial);
+
+  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+  if (wakeup_reason == ESP_SLEEP_WAKEUP_UNDEFINED) {
+#if ARDUINO_USB_CDC_ON_BOOT
+    uint32_t serialTimeout = millis() + 3000;
+    while (!Serial && millis() < serialTimeout) {
+      delay(10);
+    }
+#else
+    delay(100);
+#endif
+  }
 
   DebugSerial::begin();
 
@@ -65,18 +81,30 @@ void setup() {
 
   esp_task_wdt_init(TASK_WATCHDOG_TIMEOUT, true);
 
+  DEBUG_PRINTLN("Configuring deep sleep wake-up sources...");
+
+  esp_err_t wakeup_result = esp_sleep_enable_ext1_wakeup(WAKE_UP_PIN_MASK, ESP_EXT1_WAKEUP_ANY_LOW);
+  if (wakeup_result == ESP_OK) {
+    DEBUG_PRINTLN("EXT1 wake-up configuration successful");
+  }
+  else {
+    DEBUG_PRINTF("ERROR: EXT1 wake-up configuration failed with error: %d\n", wakeup_result);
+  }
+
+  DEBUG_PRINTF("Wake-up pin mask: 0x%llX (PIN_POWER_BUTTON=%d, PIN_POWER_INPUT_DETECT=%d)\n",
+    WAKE_UP_PIN_MASK, PIN_POWER_BUTTON, PIN_POWER_INPUT_DETECT);
+  DEBUG_PRINTLN("Deep sleep wake-up sources configured");
+
   initializeHardware();
   delay(100);
 
-  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
-
   switch (wakeup_reason) {
   case ESP_SLEEP_WAKEUP_EXT1: {
-    DEBUG_PRINTLN("=== WAKE UP FROM DEEP SLEEP ===");
-    DEBUG_PRINTLN("Wake-up triggered by external pin");
+    DEBUG_PRINTLN("=== WAKE UP FROM DEEP SLEEP (EXT1) ===");
+    DEBUG_PRINTLN("Wake-up triggered by EXT1 external pin");
 
     uint64_t wake_pin_mask = esp_sleep_get_ext1_wakeup_status();
-    DEBUG_PRINTF("Wake pin mask: 0x%llX\n", wake_pin_mask);
+    DEBUG_PRINTF("EXT1 wake pin mask: 0x%llX\n", wake_pin_mask);
 
     if (wake_pin_mask & (1ULL << PIN_POWER_BUTTON)) {
       DEBUG_PRINTLN("Wake-up caused by POWER BUTTON press");
@@ -84,6 +112,19 @@ void setup() {
     }
     if (wake_pin_mask & (1ULL << PIN_POWER_INPUT_DETECT)) {
       DEBUG_PRINTLN("Wake-up caused by POWER INPUT detection");
+    }
+    break;
+  }
+  case ESP_SLEEP_WAKEUP_GPIO: {
+    DEBUG_PRINTLN("=== WAKE UP FROM DEEP SLEEP (GPIO) ===");
+    DEBUG_PRINTLN("Wake-up triggered by GPIO");
+
+    if (digitalRead(PIN_POWER_BUTTON) == LOW) {
+      DEBUG_PRINTLN("Power button is currently pressed");
+      wokeUpFromPowerButton = true;
+    }
+    if (digitalRead(PIN_POWER_INPUT_DETECT) == LOW) {
+      DEBUG_PRINTLN("Power input is currently detected");
     }
     break;
   }
@@ -224,76 +265,43 @@ void setup() {
 void powerManagerTask(void* arg) {
   esp_task_wdt_add(NULL);
 
-  static uint32_t lastDebugTime = 0;
-  static uint32_t lastHeapCheckTime = 0;
-  const uint32_t debugInterval = 10000;
-  const uint32_t heapCheckInterval = 5000; 
-
   for (;;) {
-    uint32_t currentTime = millis();
-
-    if (currentTime - lastHeapCheckTime >= heapCheckInterval) {
-      uint32_t freeHeap = ESP.getFreeHeap();
-      uint32_t minFreeHeap = ESP.getMinFreeHeap();
-      if (freeHeap < 10000) {
-        DEBUG_PRINTF("WARNING: Low heap memory! Free: %u bytes, Min: %u bytes\n",
-          freeHeap, minFreeHeap);
-      }
-      lastHeapCheckTime = currentTime;
-    }
-
-    if (currentTime - lastDebugTime >= debugInterval) {
-      DEBUG_PRINTF("PowerTask: Running at %u ms (free stack: %u bytes)\n",
-        currentTime, uxTaskGetStackHighWaterMark(NULL));
-      lastDebugTime = currentTime;
-    }
-
     powerManager->update();
 
     esp_task_wdt_reset();
-
     delay(TASK_INTERVAL_POWER);
   }
 }
 
 void usbManagerTask(void* arg) {
-  // Add task to watchdog
   esp_task_wdt_add(NULL);
 
   for (;;) {
     usbManager->update();
 
-    // Feed the watchdog
     esp_task_wdt_reset();
-
     delay(TASK_INTERVAL_USB);
   }
 }
 
 void bleManagerTask(void* arg) {
-  // Add task to watchdog
   esp_task_wdt_add(NULL);
 
   for (;;) {
     bleManager->update();
 
-    // Feed the watchdog
     esp_task_wdt_reset();
-
     delay(TASK_INTERVAL_BLE);
   }
 }
 
 void systemManagerTask(void* arg) {
-  // Add task to watchdog
   esp_task_wdt_add(NULL);
 
   for (;;) {
     systemManager->update();
 
-    // Feed the watchdog
     esp_task_wdt_reset();
-
     delay(TASK_INTERVAL_SYSTEM);
   }
 }
@@ -301,21 +309,10 @@ void systemManagerTask(void* arg) {
 void statusManagerTask(void* arg) {
   esp_task_wdt_add(NULL);
 
-  static uint32_t lastDebugTime = 0;
-  const uint32_t debugInterval = 15000; 
-
   for (;;) {
-    uint32_t currentTime = millis();
-    if (currentTime - lastDebugTime >= debugInterval) {
-      DEBUG_PRINTF("StatusTask: Running at %u ms (free stack: %u bytes)\n",
-        currentTime, uxTaskGetStackHighWaterMark(NULL));
-      lastDebugTime = currentTime;
-    }
-
     statusManager->update();
 
     esp_task_wdt_reset();
-
     delay(TASK_INTERVAL_STATUS);
   }
 }

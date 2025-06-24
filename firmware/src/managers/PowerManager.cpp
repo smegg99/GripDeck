@@ -41,6 +41,20 @@ bool PowerManager::begin() {
 }
 
 void PowerManager::update() {
+  static uint32_t lastHeapCheckTime = 0;
+  const uint32_t heapCheckInterval = 5000;
+  uint32_t currentTime = millis();
+
+  if (currentTime - lastHeapCheckTime >= heapCheckInterval) {
+    uint32_t freeHeap = ESP.getFreeHeap();
+    uint32_t minFreeHeap = ESP.getMinFreeHeap();
+    if (freeHeap < 10000) {
+      DEBUG_PRINTF("WARNING: Low heap memory! Free: %u bytes, Min: %u bytes\n",
+        freeHeap, minFreeHeap);
+    }
+    lastHeapCheckTime = currentTime;
+  }
+
   BatteryData batteryData;
   ChargerData chargerData;
 

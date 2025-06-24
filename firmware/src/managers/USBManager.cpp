@@ -3,6 +3,7 @@
 #include "managers/USBManager.h"
 #include "managers/SystemManager.h"
 #include <utils/DebugSerial.h>
+
 #include <USB.h>
 #include "esp32-hal-tinyusb.h"
 #include "esp_event.h"
@@ -11,17 +12,30 @@
 extern SystemManager* systemManager;
 
 USBManager* USBManager::instance = nullptr;
-USBManager::USBManager() {
+
+USBManager::USBManager() : usbConnected(false), initialized(false) {
   instance = this;
+  hidQueue = nullptr;
+  hidMutex = nullptr;
 }
 
-void USBManager::staticEventHandler(arduino_usb_event_t event, void* event_data) {
-  if (instance) {
-    instance->handleUSBEvent(event, event_data);
+USBManager::~USBManager() {
+  if (instance == this) {
+    instance = nullptr;
+  }
+  if (hidQueue) {
+    vQueueDelete(hidQueue);
+  }
+  if (hidMutex) {
+    vSemaphoreDelete(hidMutex);
   }
 }
 
 void USBManager::handleUSBEvent(arduino_usb_event_t event, void* event_data) {
+  if (!isUSBHIDEnabled()) {
+    return;
+  }
+
   switch (event) {
   case ARDUINO_USB_STARTED_EVENT:
     DEBUG_PRINTLN("USB device enumerated by host");
@@ -45,22 +59,17 @@ void USBManager::handleUSBEvent(arduino_usb_event_t event, void* event_data) {
   }
 }
 
-USBManager::~USBManager() {
-  if (instance == this) {
-    instance = nullptr;
+bool USBManager::initializeFreeRTOSResources() {
+  if (!isUSBHIDEnabled()) {
+    initialized = true;
+    return true;
   }
-  if (hidQueue) {
-    vQueueDelete(hidQueue);
-  }
-  if (hidMutex) {
-    vSemaphoreDelete(hidMutex);
-  }
-}
 
-bool USBManager::begin() {
-  DEBUG_PRINTLN("Initializing USBManager...");
+  if (initialized) {
+    return true;
+  }
 
-  DEBUG_PRINTF("HIDMessage size: %d bytes\n", sizeof(HIDMessage));
+  DEBUG_PRINTLN("Initializing FreeRTOS resources for USBManager...");
 
   hidQueue = xQueueCreate(10, sizeof(HIDMessage));
   if (!hidQueue) {
@@ -71,9 +80,27 @@ bool USBManager::begin() {
   hidMutex = xSemaphoreCreateMutex();
   if (!hidMutex) {
     DEBUG_PRINTLN("ERROR: Failed to create HID mutex");
+    vQueueDelete(hidQueue);
+    hidQueue = nullptr;
     return false;
   }
 
+  initialized = true;
+  DEBUG_PRINTLN("FreeRTOS resources initialized successfully");
+  return true;
+}
+
+bool USBManager::begin() {
+  DEBUG_PRINTLN("Initializing USBManager...");
+
+  if (!isUSBHIDEnabled()) {
+    DEBUG_PRINTLN("USBManager: USB HID functionality disabled");
+    usbConnected = false;
+    initialized = true;
+    return true;
+  }
+
+  DEBUG_PRINTF("HIDMessage size: %d bytes\n", sizeof(HIDMessage));
   DEBUG_PRINTLN("Configuring USB device descriptor...");
 
   USB.VID(USB_MY_VID);
@@ -124,12 +151,23 @@ bool USBManager::begin() {
   delay(1000);
   checkInitialUSBStatus();
 
-  DEBUG_PRINTLN("USBManager initialized successfully");
+  DEBUG_PRINTLN("USBManager basic initialization complete");
+  DEBUG_PRINTLN("FreeRTOS resources will be initialized when first task runs");
 
   return true;
 }
 
 void USBManager::update() {
+  if (!isUSBHIDEnabled()) {
+    return;
+  }
+
+  // So we don't initialize FreeRTOS resources too early and cause issues like before, it would not wake up from deep sleep
+  if (!initialized && !initializeFreeRTOSResources()) {
+    DEBUG_PRINTLN("ERROR: Failed to initialize FreeRTOS resources");
+    return;
+  }
+
   bool currentStatus = false;
 
   if (millis() > 5000) {
@@ -147,6 +185,16 @@ void USBManager::update() {
 }
 
 void USBManager::executeHIDCommand(const HIDMessage& command) {
+  if (!isUSBHIDEnabled()) {
+    DEBUG_PRINTLN("WARNING: HID command rejected - USB HID functionality disabled");
+    return;
+  }
+
+  if (!initialized) {
+    DEBUG_PRINTLN("WARNING: HID command rejected - USBManager not initialized");
+    return;
+  }
+
   if (!usbConnected) {
     DEBUG_PRINTLN("WARNING: HID command rejected USB not connected");
     return;
@@ -327,6 +375,14 @@ void USBManager::executeHIDCommand(const HIDMessage& command) {
 }
 
 void USBManager::processHIDCommands() {
+  if (!isUSBHIDEnabled()) {
+    return;
+  }
+
+  if (!initialized || !hidQueue) {
+    return;
+  }
+
   HIDMessage message;
 
   while (xQueueReceive(hidQueue, &message, 0) == pdTRUE) {
@@ -338,7 +394,9 @@ void USBManager::processHIDCommands() {
 }
 
 bool USBManager::sendKeyPress(uint8_t key) {
-  if (!isValidKey(key)) return false;
+  if (!isUSBHIDEnabled()) return true;
+
+  if (!isValidKey(key) || !initialized || !hidQueue) return false;
 
   HIDMessage message = {};
   message.command = HID_KEYBOARD_PRESS;
@@ -353,7 +411,9 @@ bool USBManager::sendKeyPress(uint8_t key) {
 }
 
 bool USBManager::sendKeyHold(uint8_t key) {
-  if (!isValidKey(key)) return false;
+  if (!isUSBHIDEnabled()) return true;
+
+  if (!isValidKey(key) || !initialized || !hidQueue) return false;
 
   HIDMessage message = {};
   message.command = HID_KEYBOARD_HOLD;
@@ -368,7 +428,9 @@ bool USBManager::sendKeyHold(uint8_t key) {
 }
 
 bool USBManager::sendKeyRelease(uint8_t key) {
-  if (!isValidKey(key)) return false;
+  if (!isUSBHIDEnabled()) return true;
+
+  if (!isValidKey(key) || !initialized || !hidQueue) return false;
 
   HIDMessage message = {};
   message.command = HID_KEYBOARD_RELEASE;
@@ -383,7 +445,9 @@ bool USBManager::sendKeyRelease(uint8_t key) {
 }
 
 bool USBManager::typeText(const char* text) {
-  if (!text || strlen(text) == 0) return false;
+  if (!isUSBHIDEnabled()) return true;
+
+  if (!text || strlen(text) == 0 || !initialized || !hidQueue) return false;
 
   HIDMessage message = {};
   message.command = HID_KEYBOARD_TYPE;
@@ -400,6 +464,10 @@ bool USBManager::typeText(const char* text) {
 }
 
 bool USBManager::sendMouseMove(int16_t x, int16_t y) {
+  if (!isUSBHIDEnabled()) return true;
+
+  if (!initialized || !hidQueue) return false;
+
   HIDMessage message = {};
   message.command = HID_MOUSE_MOVE;
   message.key = 0;
@@ -413,7 +481,9 @@ bool USBManager::sendMouseMove(int16_t x, int16_t y) {
 }
 
 bool USBManager::sendMousePress(uint8_t button) {
-  if (!isValidMouseButton(button)) return false;
+  if (!isUSBHIDEnabled()) return true;
+
+  if (!isValidMouseButton(button) || !initialized || !hidQueue) return false;
 
   HIDMessage message = {};
   message.command = HID_MOUSE_PRESS;
@@ -428,7 +498,9 @@ bool USBManager::sendMousePress(uint8_t button) {
 }
 
 bool USBManager::sendMouseHold(uint8_t button) {
-  if (!isValidMouseButton(button)) return false;
+  if (!isUSBHIDEnabled()) return true;
+
+  if (!isValidMouseButton(button) || !initialized || !hidQueue) return false;
 
   HIDMessage message = {};
   message.command = HID_MOUSE_HOLD;
@@ -443,7 +515,9 @@ bool USBManager::sendMouseHold(uint8_t button) {
 }
 
 bool USBManager::sendMouseRelease(uint8_t button) {
-  if (!isValidMouseButton(button)) return false;
+  if (!isUSBHIDEnabled()) return true;
+
+  if (!isValidMouseButton(button) || !initialized || !hidQueue) return false;
 
   HIDMessage message = {};
   message.command = HID_MOUSE_RELEASE;
@@ -458,6 +532,10 @@ bool USBManager::sendMouseRelease(uint8_t button) {
 }
 
 bool USBManager::sendMouseScroll(int16_t x, int16_t y) {
+  if (!isUSBHIDEnabled()) return true;
+
+  if (!initialized || !hidQueue) return false;
+
   HIDMessage message = {};
   message.command = HID_MOUSE_SCROLL;
   message.key = 0;
@@ -471,6 +549,10 @@ bool USBManager::sendMouseScroll(int16_t x, int16_t y) {
 }
 
 bool USBManager::sendGamepadButton(uint8_t button, bool pressed) {
+  if (!isUSBHIDEnabled()) return true;
+
+  if (!initialized || !hidQueue) return false;
+
   HIDMessage message = {};
   message.command = HID_GAMEPAD_BUTTON;
   message.key = button;
@@ -484,6 +566,10 @@ bool USBManager::sendGamepadButton(uint8_t button, bool pressed) {
 }
 
 bool USBManager::sendGamepadRightAxis(int16_t x, int16_t y) {
+  if (!isUSBHIDEnabled()) return true;
+
+  if (!initialized || !hidQueue) return false;
+
   HIDMessage message = {};
   message.command = HID_GAMEPAD_AXIS_RIGHT;
   message.key = 0;
@@ -497,6 +583,10 @@ bool USBManager::sendGamepadRightAxis(int16_t x, int16_t y) {
 }
 
 bool USBManager::sendGamepadLeftAxis(int16_t x, int16_t y) {
+  if (!isUSBHIDEnabled()) return true;
+
+  if (!initialized || !hidQueue) return false;
+
   HIDMessage message = {};
   message.command = HID_GAMEPAD_AXIS_LEFT;
   message.key = 0;
@@ -512,6 +602,10 @@ bool USBManager::sendGamepadLeftAxis(int16_t x, int16_t y) {
 bool USBManager::sendSystemPowerKey() {
   DEBUG_PRINTLN("Sending system power key");
 
+  if (!isUSBHIDEnabled()) return true;
+
+  if (!initialized || !hidQueue) return false;
+
   HIDMessage message = {};
   message.command = HID_SYSTEM_POWER;
   message.key = 0;
@@ -524,8 +618,14 @@ bool USBManager::sendSystemPowerKey() {
   return xQueueSend(hidQueue, &message, 0) == pdTRUE;
 }
 
+// TODO: Implement this finally
+bool USBManager::sendStatusReport(const SystemStatus& status) {
+  return true;
+}
+
 bool USBManager::isValidKey(uint8_t key) {
-  // ASCII printable characters (32-126)
+  if (!isUSBHIDEnabled()) return true;
+
   if (key >= 32 && key <= 126) {
     return true;
   }
@@ -567,13 +667,20 @@ bool USBManager::isValidKey(uint8_t key) {
 
   DEBUG_PRINTF("Key validation: Key code %d may not be valid\n", key);
   return true;
-}
+  }
 
 bool USBManager::isValidMouseButton(uint8_t button) {
+  if (!isUSBHIDEnabled()) return true;
   return button > 0 && button <= 7;
 }
 
 void USBManager::checkInitialUSBStatus() {
+  if (!isUSBHIDEnabled()) {
+    DEBUG_PRINTLN("USBManager: Initial USB status check skipped (USB disabled)");
+    usbConnected = false;
+    return;
+  }
+
   DEBUG_PRINTLN("Checking initial USB connection status...");
 
   delay(1000);

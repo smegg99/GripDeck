@@ -34,7 +34,7 @@
 #define INA3221_I2C_ADDRESS                 0x40
 #define INA3221_CHANNEL_CHARGER             1   // Channel 1: 5V input voltage/current
 #define INA3221_CHANNEL_BATTERY             3   // Channel 3: LiPo battery voltage/current
-#define INA3221_SHUNT_RESISTANCE            0.1 // Shunt resistance in MOhms
+#define INA3221_SHUNT_RESISTANCE            0.1 // Shunt resistance in MOhms, make sure to match your hardware
 
 // INA3221 Register Addresses
 #define INA3221_CHANNEL_1_SHUNT_REGISTER    0x01
@@ -76,6 +76,7 @@
 #define LED_BLINK_FAST                      200     // Fast blink for connections
 #define LED_BLINK_SLOW                      1000    // Slow blink for status changes
 #define LED_BLINK_DURATION                  3000    // How long to blink before returning to steady state
+#define LED_PULSE_CYCLE                     2000    // Complete pulse cycle duration for charging effect
 
 // ====================================================================
 // USB HID CONFIGURATION
@@ -87,6 +88,7 @@
 #define USB_PRODUCT_VERSION                 0x0100
 #define USB_SERIAL_NUMBER                   "GD001"
 #define USB_CONNECTION_TIMEOUT              15000   // Max time without USB activity before SBC shutdown
+#define DISABLE_USB_HID                     false   // Set to true to disable USB HID functionality
 
 // USB HID Press Delays
 #define USB_HID_KEYBOARD_PRESS_DELAY        50      // Delay after pressing a key before releasing it (ms)
@@ -124,11 +126,11 @@
 #define TASK_PRIORITY_CRITICAL              15
 
 // Task Update Intervals (ms)
-#define TASK_INTERVAL_POWER                 1000    // Power management task
-#define TASK_INTERVAL_SYSTEM                100     // System management task
-#define TASK_INTERVAL_USB                   100     // USB HID task
-#define TASK_INTERVAL_BLE                   100     // BLE task
-#define TASK_INTERVAL_STATUS                50      // Status manager task (fast for LED effects)
+#define TASK_INTERVAL_POWER                 1500    // Power management task
+#define TASK_INTERVAL_SYSTEM                1000     // System management task
+#define TASK_INTERVAL_USB                   10     // USB HID task
+#define TASK_INTERVAL_BLE                   10     // BLE task
+#define TASK_INTERVAL_STATUS                5      // Status manager task
 
 // Task Watchdog
 #define TASK_WATCHDOG_TIMEOUT               30      // Seconds
@@ -141,7 +143,7 @@
 // ====================================================================
 // DEEP SLEEP CONFIGURATION
 // ====================================================================
-#define DEEP_SLEEP_WATCHDOG_TIMEOUT_MS      180000  // 3 minutes of inactivity before deep sleep
+#define DEEP_SLEEP_WATCHDOG_TIMEOUT_MS      30000   // Seconds of inactivity before deep sleep
 #define DEEP_SLEEP_ACTIVITY_RESET_INTERVAL_MS 1000  // Check for activity every second
 #define WAKE_UP_PIN_MASK                    ((1ULL << PIN_POWER_BUTTON) | (1ULL << PIN_POWER_INPUT_DETECT))
 

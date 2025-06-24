@@ -2,6 +2,9 @@
 #ifndef USB_MANAGER_H
 #define USB_MANAGER_H
 
+#include <cstdint>
+#include "config/Config.h"
+
 #include <USBHIDKeyboard.h>
 #include <USBHIDMouse.h>
 #include <USBHIDGamepad.h>
@@ -51,21 +54,24 @@ private:
   USBHIDGamepad gamepad;
   USBHIDConsumerControl consumerControl;
 
-  bool usbConnected = false;
-
   QueueHandle_t hidQueue;
   SemaphoreHandle_t hidMutex;
 
+  bool usbConnected = false;
+  bool initialized = false;
+
   static USBManager* instance;
 
-  static void staticEventHandler(arduino_usb_event_t event, void* event_data);
-  void handleUSBEvent(arduino_usb_event_t event, void* event_data);
   void processHIDCommands();
   void executeHIDCommand(const HIDMessage& command);
   void checkInitialUSBStatus();
+  void handleUSBEvent(arduino_usb_event_t event, void* event_data);
+  bool initializeFreeRTOSResources();
 
   bool isValidKey(uint8_t key);
   bool isValidMouseButton(uint8_t button);
+
+  inline bool isUSBHIDEnabled() const { return !DISABLE_USB_HID; }
 public:
   USBManager();
   ~USBManager();

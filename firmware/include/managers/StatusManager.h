@@ -26,21 +26,23 @@ enum DeviceStatus {
   STATUS_BLE_CMD_ERROR,    // BLE error occurred - fast blink pattern
   STATUS_HID_CONNECTED,    // HID device connected - fast blink then steady
   STATUS_HID_DISCONNECTED, // HID device disconnected - fast blink then steady
-  STATUS_SHUTDOWN          // System shutdown - fade out
+  STATUS_CHARGING,         // Battery is charging, NOTE: I thought about making so that it adjusts frequency based on charge level, but I think it's better to keep it simple
+  STATUS_SHUTDOWN          // System shutdown
 };
 
 struct StatusMessage {
   DeviceStatus status;
   uint32_t timestamp;
-  uint32_t duration;  // How long to display this status (0 = permanent)
+  uint32_t duration;
 };
 
 enum LEDPattern {
-  LED_PATTERN_OFF,          // LEDs off
-  LED_PATTERN_STEADY,       // Steady brightness
-  LED_PATTERN_BLINK_FAST,   // Fast blinking
-  LED_PATTERN_BLINK_SLOW,   // Slow blinking
-  LED_PATTERN_FADE_OUT      // Fade out to off
+  LED_PATTERN_OFF,
+  LED_PATTERN_STEADY,
+  LED_PATTERN_BLINK_FAST,
+  LED_PATTERN_BLINK_SLOW,
+  LED_PATTERN_PULSE,
+  LED_PATTERN_FADE_OUT
 };
 
 class StatusManager {
@@ -59,6 +61,7 @@ private:
   bool prevBLEConnected;
   bool prevUSBConnected;
   bool prevLowPowerMode;
+  bool prevCharging;
 
   void setLEDPattern(LEDPattern pattern, uint8_t brightness = LED_BRIGHTNESS_MAX);
   void updateLEDPattern();
@@ -68,6 +71,7 @@ private:
 
   void updateSteadyPattern();
   void updateBlinkPattern(uint32_t blinkInterval);
+  void updatePulsePattern();
   void updateFadeOutPattern();
 
   uint8_t getLEDBrightness() const;

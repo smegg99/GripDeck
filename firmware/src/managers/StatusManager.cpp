@@ -22,7 +22,8 @@ StatusManager::StatusManager() :
   isLowPowerMode(false),
   prevBLEConnected(false),
   prevUSBConnected(false),
-  prevLowPowerMode(false) {
+  prevLowPowerMode(false),
+  prevCharging(false) {
 }
 
 StatusManager::~StatusManager() {
@@ -115,7 +116,9 @@ void StatusManager::checkConnectionStates() {
   bool currentUSB = usbManager->isUSBConnected();
   bool currentLowPower = isLowPowerMode;
 
-  // Check BLE connection state changes
+  PowerData powerData = powerManager->getPowerData();
+  bool currentCharging = powerData.charger.connected;
+
   if (currentBLE != prevBLEConnected) {
     if (currentBLE) {
       DEBUG_PRINTLN("StatusManager: BLE connected");
@@ -141,7 +144,18 @@ void StatusManager::checkConnectionStates() {
     prevUSBConnected = currentUSB;
   }
 
-  // Update previous states
+  if (currentCharging != prevCharging) {
+    if (currentCharging) {
+      DEBUG_PRINTLN("StatusManager: Battery charging started");
+      setStatus(STATUS_CHARGING, 0);
+    }
+    else {
+      DEBUG_PRINTLN("StatusManager: Battery charging stopped");
+      setStatus(STATUS_IDLE, 0);
+    }
+    prevCharging = currentCharging;
+  }
+
   prevLowPowerMode = currentLowPower;
 }
 
@@ -171,6 +185,10 @@ void StatusManager::handleStatusChange(DeviceStatus newStatus, uint32_t duration
 
   case STATUS_LOW_POWER_MODE:
     setLEDPattern(LED_PATTERN_STEADY, LED_BRIGHTNESS_POWER_SAVE);
+    break;
+
+  case STATUS_CHARGING:
+    setLEDPattern(LED_PATTERN_PULSE, getLEDBrightness());
     break;
 
   case STATUS_BLE_CMD_ERROR:
@@ -222,6 +240,10 @@ void StatusManager::updateLEDPattern() {
     updateBlinkPattern(LED_BLINK_SLOW);
     break;
 
+  case LED_PATTERN_PULSE:
+    updatePulsePattern();
+    break;
+
   case LED_PATTERN_FADE_OUT:
     updateFadeOutPattern();
     break;
@@ -248,6 +270,20 @@ void StatusManager::updateBlinkPattern(uint32_t blinkInterval) {
 
     powerManager->setLEDPower(blinkState ? currentBrightness : 0);
   }
+}
+
+void StatusManager::updatePulsePattern() {
+  uint32_t currentTime = millis();
+  uint32_t elapsed = (currentTime - patternStartTime) % LED_PULSE_CYCLE;
+
+  float phase = (float)elapsed * 2.0f * PI / LED_PULSE_CYCLE;
+
+  float sineValue = (sin(phase) + 1.0f) / 2.0f;
+
+  uint8_t minBrightness = currentBrightness / 5;
+  uint8_t pulseBrightness = minBrightness + (uint8_t)((currentBrightness - minBrightness) * sineValue);
+
+  powerManager->setLEDPower(pulseBrightness);
 }
 
 void StatusManager::updateFadeOutPattern() {

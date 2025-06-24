@@ -10,7 +10,6 @@ private:
   void updateDeepSleepWatchdog();
   void resetActivityTimer();
   void enterDeepSleep();
-  bool shouldEnterDeepSleep();
 
   uint32_t lastButtonTime;
   bool lastButtonState;
@@ -21,6 +20,7 @@ private:
   uint32_t lastActivityTime;
   uint32_t lastActivityCheck;
   bool deepSleepEnabled;
+  bool deepSleepRequested;
 
 public:
   SystemManager();
@@ -28,6 +28,8 @@ public:
 
   bool begin();
   void update();
+
+  bool shouldEnterDeepSleep();
   void notifyActivity();
   void notifyWakeFromDeepSleep();
 

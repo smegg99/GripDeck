@@ -13,7 +13,18 @@ extern PowerManager* powerManager;
 extern SystemManager* systemManager;
 extern StatusManager* statusManager;
 
-BLEManager::BLEManager() {}
+BLEManager::BLEManager() :
+  pServer(nullptr),
+  pService(nullptr),
+  pTxCharacteristic(nullptr),
+  pRxCharacteristic(nullptr),
+  commandQueue(nullptr),
+  bleMutex(nullptr),
+  deviceConnected(false),
+  oldDeviceConnected(false),
+  serverCallbacks(nullptr),
+  rxCallbacks(nullptr) {
+}
 
 BLEManager::~BLEManager() {
   if (commandQueue) {

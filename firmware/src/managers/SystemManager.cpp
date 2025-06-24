@@ -4,11 +4,18 @@
 #include "utils/DebugSerial.h"
 #include <managers/PowerManager.h>
 #include <managers/BLEManager.h>
+#include <managers/USBManager.h>
 #include <WiFi.h>
 #include <esp_sleep.h>
+#include <esp_task_wdt.h>
+#include <freertos/task.h>
+#include <driver/gpio.h>
+#include <driver/rtc_io.h>
+#include <driver/ledc.h>
 
 extern PowerManager* powerManager;
 extern BLEManager* bleManager;
+extern USBManager* usbManager;
 
 SystemManager::SystemManager() {}
 
@@ -25,14 +32,33 @@ bool SystemManager::begin() {
   lastActivityTime = millis();
   lastActivityCheck = millis();
   deepSleepEnabled = true;
+  deepSleepRequested = false;
 
-  DEBUG_PRINTLN("SystemManager initialized successfully");
+  DEBUG_PRINTLN("SystemManager initialized successfully (deep sleep enabled)");
   return true;
 }
 
 void SystemManager::update() {
   checkPowerButton();
   updateDeepSleepWatchdog();
+
+  if (deepSleepRequested) {
+    deepSleepRequested = false;
+    delay(10);
+    enterDeepSleep();
+  }
+
+  static uint32_t lastStatusTime = 0;
+  uint32_t currentTime = millis();
+  if (currentTime - lastStatusTime >= 10000) {
+    lastStatusTime = currentTime;
+    uint32_t timeSinceActivity = currentTime - lastActivityTime;
+    DEBUG_PRINTF("=== DEEP SLEEP STATUS === Enabled: %s, SBC: %s, BLE: %s, Inactive: %lu ms\n",
+      deepSleepEnabled ? "YES" : "NO",
+      powerManager->isSBCPowerOn() ? "ON" : "OFF",
+      bleManager->isConnected() ? "CONN" : "DISC",
+      timeSinceActivity);
+  }
 }
 
 void SystemManager::checkPowerButton() {
@@ -80,25 +106,36 @@ void SystemManager::updateDeepSleepWatchdog() {
         uint32_t timeSinceActivity = currentTime - lastActivityTime;
         if (timeSinceActivity >= DEEP_SLEEP_WATCHDOG_TIMEOUT_MS) {
           DEBUG_PRINTF("Deep sleep watchdog triggered after %lu ms of inactivity\n", timeSinceActivity);
-          enterDeepSleep();
+          deepSleepRequested = true;
+        }
+        else {
+          uint32_t timeRemaining = DEEP_SLEEP_WATCHDOG_TIMEOUT_MS - timeSinceActivity;
+          DEBUG_PRINTF("Deep sleep in %lu ms (inactive for %lu ms)\n", timeRemaining, timeSinceActivity);
         }
       }
       else {
         resetActivityTimer();
+        DEBUG_PRINTLN("Deep sleep blocked - conditions not met, resetting timer");
       }
+    }
+    else {
+      DEBUG_PRINTLN("Deep sleep watchdog disabled");
     }
   }
 }
 
 bool SystemManager::shouldEnterDeepSleep() {
   if (powerManager->isSBCPowerOn()) {
+    DEBUG_PRINTLN("Deep sleep blocked: SBC power is ON");
     return false;
   }
 
   if (bleManager->isConnected()) {
+    DEBUG_PRINTLN("Deep sleep blocked: BLE is connected");
     return false;
   }
 
+  DEBUG_PRINTLN("Deep sleep conditions met - ready to sleep");
   return true;
 }
 
@@ -109,6 +146,7 @@ void SystemManager::resetActivityTimer() {
 void SystemManager::notifyActivity() {
   resetActivityTimer();
   DEBUG_PRINTLN("Activity detected - deep sleep watchdog reset");
+  DEBUG_PRINTF("Activity from: millis=%lu\n", millis());
 }
 
 void SystemManager::notifyWakeFromDeepSleep() {
@@ -119,21 +157,57 @@ void SystemManager::notifyWakeFromDeepSleep() {
 
 void SystemManager::enterDeepSleep() {
   DEBUG_PRINTLN("=== ENTERING DEEP SLEEP ===");
-  DEBUG_PRINTLN("Configuring wake-up sources...");
 
-  // NOTE: Idk if i should do it the second time here, but it seems to work fine
-  esp_sleep_enable_ext1_wakeup(WAKE_UP_PIN_MASK, ESP_EXT1_WAKEUP_ANY_HIGH);
+  DEBUG_PRINTLN("Configuring RTC GPIO settings for deep sleep wake-up...");
 
-  DEBUG_PRINTF("Wake-up pin mask: 0x%llX\n", WAKE_UP_PIN_MASK);
+  rtc_gpio_init((gpio_num_t)PIN_POWER_BUTTON);
+  rtc_gpio_set_direction((gpio_num_t)PIN_POWER_BUTTON, RTC_GPIO_MODE_INPUT_ONLY);
+  rtc_gpio_pullup_en((gpio_num_t)PIN_POWER_BUTTON);
+  rtc_gpio_pulldown_dis((gpio_num_t)PIN_POWER_BUTTON);
 
+  rtc_gpio_init((gpio_num_t)PIN_POWER_INPUT_DETECT);
+  rtc_gpio_set_direction((gpio_num_t)PIN_POWER_INPUT_DETECT, RTC_GPIO_MODE_INPUT_ONLY);
+  rtc_gpio_pullup_en((gpio_num_t)PIN_POWER_INPUT_DETECT);
+  rtc_gpio_pulldown_dis((gpio_num_t)PIN_POWER_INPUT_DETECT);
+
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+
+  esp_err_t ext1_result = esp_sleep_enable_ext1_wakeup(WAKE_UP_PIN_MASK, ESP_EXT1_WAKEUP_ANY_LOW);
+  DEBUG_PRINTF("EXT1 wake-up configuration result: %d\n", ext1_result);
+
+  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
+
+  DEBUG_FLUSH();
+  delay(200);
+
+  if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING) {
+    DEBUG_PRINTLN("ERROR: FreeRTOS scheduler not running - cannot enter deep sleep safely");
+    DEBUG_FLUSH();
+    delay(100);
+    esp_restart();
+    return;
+  }
+
+  TaskHandle_t currentTask = xTaskGetCurrentTaskHandle();
+  if (currentTask == NULL) {
+    DEBUG_PRINTLN("ERROR: Not running in task context - cannot enter deep sleep safely");
+    DEBUG_FLUSH();
+    delay(100);
+    esp_restart();
+    return;
+  }
+
+  DEBUG_PRINTF("Deep sleep from task: %s\n", pcTaskGetName(currentTask));
+
+  esp_task_wdt_delete(NULL);
+
+  DEBUG_PRINTLN("Scheduler verified - entering deep sleep now...");
+  DEBUG_FLUSH();
   delay(100);
-
-  DEBUG_PRINTLN("Going to deep sleep now...");
-  delay(50);
 
   esp_deep_sleep_start();
 
-  DEBUG_PRINTLN("ERROR: Failed to enter deep sleep!");
+  DEBUG_PRINTLN("ERROR: Failed to enter deep sleep! (This should not happen)");
   esp_restart();
 }
 
@@ -154,21 +228,20 @@ bool SystemManager::isDeepSleepEnabled() const {
 
 uint32_t SystemManager::getTimeUntilDeepSleep() const {
   if (!deepSleepEnabled) {
-    return 0; // Deep sleep disabled
+    return 0;
   }
 
-  // Check blocking conditions
   if (powerManager && powerManager->isSBCPowerOn()) {
-    return 0; // Deep sleep blocked by SBC power
+    return 0;
   }
 
   if (bleManager && bleManager->isConnected()) {
-    return 0; // Deep sleep blocked by BLE connection
+    return 0;
   }
 
   uint32_t timeSinceActivity = millis() - lastActivityTime;
   if (timeSinceActivity >= DEEP_SLEEP_WATCHDOG_TIMEOUT_MS) {
-    return 0; // Should already be in deep sleep
+    return 0;
   }
 
   return DEEP_SLEEP_WATCHDOG_TIMEOUT_MS - timeSinceActivity;
