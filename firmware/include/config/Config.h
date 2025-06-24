@@ -67,13 +67,23 @@
 #define LED_PWM_RESOLUTION                  8       // PWM resolution (8-bit = 0-255)
 #define LED_PWM_CHANNEL                     0       // PWM channel for MOSFET control
 
+// LED Status Brightness Levels
+#define LED_BRIGHTNESS_MAX                  255     // Maximum brightness (normal mode)
+#define LED_BRIGHTNESS_POWER_SAVE           64      // Reduced brightness (power save mode)
+#define LED_BRIGHTNESS_OFF                  0       // LEDs off
+
+// LED Blink Patterns (ms)
+#define LED_BLINK_FAST                      200     // Fast blink for connections
+#define LED_BLINK_SLOW                      1000    // Slow blink for status changes
+#define LED_BLINK_DURATION                  3000    // How long to blink before returning to steady state
+
 // ====================================================================
 // USB HID CONFIGURATION
 // ====================================================================
 #define USB_MY_VID                          0x1209
-#define USB_MY_PID                          0x2077
-#define USB_MANUFACTURER                    "GripDeck"
-#define USB_PRODUCT                         "SBC Controller"
+#define USB_MY_PID                          0x2078
+#define USB_MANUFACTURER                    "Smuggr"
+#define USB_PRODUCT                         "GripDeck Controller"
 #define USB_PRODUCT_VERSION                 0x0100
 #define USB_SERIAL_NUMBER                   "GD001"
 #define USB_CONNECTION_TIMEOUT              15000   // Max time without USB activity before SBC shutdown
@@ -118,6 +128,7 @@
 #define TASK_INTERVAL_SYSTEM                100     // System management task
 #define TASK_INTERVAL_USB                   100     // USB HID task
 #define TASK_INTERVAL_BLE                   100     // BLE task
+#define TASK_INTERVAL_STATUS                50      // Status manager task (fast for LED effects)
 
 // Task Watchdog
 #define TASK_WATCHDOG_TIMEOUT               30      // Seconds
@@ -130,7 +141,7 @@
 // ====================================================================
 // DEEP SLEEP CONFIGURATION
 // ====================================================================
-#define DEEP_SLEEP_WATCHDOG_TIMEOUT_MS      600000  // 10 minutes of inactivity before deep sleep
+#define DEEP_SLEEP_WATCHDOG_TIMEOUT_MS      180000  // 3 minutes of inactivity before deep sleep
 #define DEEP_SLEEP_ACTIVITY_RESET_INTERVAL_MS 1000  // Check for activity every second
 #define WAKE_UP_PIN_MASK                    ((1ULL << PIN_POWER_BUTTON) | (1ULL << PIN_POWER_INPUT_DETECT))
 

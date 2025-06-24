@@ -9,6 +9,9 @@
 #include <freertos/semphr.h>
 #include <config/Config.h>
 
+// Forward declaration
+class StatusManager;
+
 struct BatteryData {
   float voltage;          // Battery voltage (V)
   float current;          // Battery current (A) - positive = charging, negative = discharging
@@ -71,9 +74,10 @@ private:
   SemaphoreHandle_t powerDataMutex = nullptr;
 
   bool ledsEnabled = false;
+  bool previousPowerSavingMode = false;
 
   void setPowerData(BatteryData battery, ChargerData charger) {
-    if (xSemaphoreTake(powerDataMutex, portMAX_DELAY) == pdPASS) {
+    if (powerDataMutex && xSemaphoreTake(powerDataMutex, pdMS_TO_TICKS(100)) == pdPASS) {
       powerData.battery = battery;
       powerData.charger = charger;
       powerData.timestamp = millis();
@@ -91,6 +95,8 @@ private:
   float readShuntVoltage(uint8_t channel);
   float readCurrent(uint8_t channel);
 
+  bool shouldSBCBePoweredOn();
+
   float calculateBatteryPercentage(float current, float voltage);
   float calculateEstimatedTimeToFullyCharge(float chargerCurrent, float chargerVoltage, float batteryCurrent, float batteryVoltage, float percentage);
 public:
@@ -101,36 +107,47 @@ public:
   void update();
 
   PowerData getPowerData() const {
-    if (xSemaphoreTake(powerDataMutex, portMAX_DELAY) == pdPASS) {
+    PowerData data;
+    if (powerDataMutex && xSemaphoreTake(powerDataMutex, pdMS_TO_TICKS(100)) == pdPASS) {
+      data = powerData;
       xSemaphoreGive(powerDataMutex);
-      return powerData;
     }
-    return PowerData();
+    return data;
   }
 
   void trySetSBCPower(bool on);
   void forceSetSBCPower(bool on) {
     digitalWrite(PIN_SBC_POWER_MOSFET, on ? HIGH : LOW);
   }
-  
+
   bool isSBCPowerOn() const {
     return digitalRead(PIN_SBC_POWER_MOSFET) == HIGH;
   }
 
   bool canPowerOnSBC() const {
+    if (!powerDataMutex) {
+      return false;
+    }
+
     bool canPowerOn = false;
-    if (xSemaphoreTake(powerDataMutex, portMAX_DELAY) != pdTRUE) {
-      PowerData powerData = getPowerData();
-      canPowerOn = powerData.battery.percentage >= BATTERY_MIN_PERCENTAGE && !isSBCPowerOn();
+    if (xSemaphoreTake(powerDataMutex, pdMS_TO_TICKS(100)) == pdPASS) {
+      canPowerOn = powerData.battery.percentage >= BATTERY_MIN_PERCENTAGE;
       xSemaphoreGive(powerDataMutex);
+    }
+    else {
+      return false;
     }
 
     return canPowerOn;
   }
 
   bool isPowerSavingMode() const {
+    if (!powerDataMutex) {
+      return false;
+    }
+
     bool isPowerSaving = false;
-    if (xSemaphoreTake(powerDataMutex, portMAX_DELAY) == pdPASS) {
+    if (xSemaphoreTake(powerDataMutex, pdMS_TO_TICKS(100)) == pdPASS) {
       isPowerSaving = powerData.powerSavingMode;
       xSemaphoreGive(powerDataMutex);
     }
@@ -140,6 +157,22 @@ public:
   void setLEDPower(uint8_t brightness);
   void enableLEDs(bool enable);
   bool areLEDsEnabled() const { return ledsEnabled; }
+
+  const char* getPowerInfo() const {
+    static char info[256];
+
+    PowerData data = getPowerData();
+
+    snprintf(info, sizeof(info),
+      "POWER_INFO:%.3f|%.3f|%.3f|%.3f|%.1f",
+      data.battery.voltage,
+      data.battery.current,
+      data.charger.voltage,
+      data.charger.current,
+      data.battery.percentage);
+
+    return info;
+  }
 };
 
 #endif // POWER_MANAGER_H

@@ -37,6 +37,7 @@ public:
   uint32_t getTimeUntilDeepSleep() const;
 
   const char* getSystemInfo() const;
+  const char* getDeepSleepInfo() const;
 };
 
 #endif // SYSTEM_MANAGER_H

@@ -1,6 +1,7 @@
 // src/managers/BLEManager.cpp
 
 #include "managers/BLEManager.h"
+#include "managers/StatusManager.h"
 #include "config/Config.h"
 #include "utils/DebugSerial.h"
 #include "managers/USBManager.h"
@@ -10,6 +11,7 @@
 extern USBManager* usbManager;
 extern PowerManager* powerManager;
 extern SystemManager* systemManager;
+extern StatusManager* statusManager;
 
 BLEManager::BLEManager() {}
 
@@ -212,6 +214,9 @@ void BLEManager::parseCommand(const char* data, BLEMessage& message) {
   if (!parseDataComponents(cleanData, message)) {
     DEBUG_PRINTLN("ERROR: Failed to parse command data components");
     message.command = BLE_CMD_SYNTAX_ERROR;
+    if (statusManager) {
+      statusManager->setStatus(STATUS_BLE_CMD_ERROR, LED_BLINK_DURATION);
+    }
     return;
   }
 
@@ -276,19 +281,32 @@ void BLEManager::handleCommand(const BLEMessage& message) {
   }
 
   switch (message.command) {
-  case BLE_CMD_STATUS:
-    sendResponse("BATTERY_VOLTAGE|BATTERY_CURRENT|CHARGER_VOLTAGE|CHARGER_CURRENT|BATTERY_PERCENTAGE");
+  case BLE_CMD_POWER_INFO:
+    DEBUG_PRINTLN("Getting power info");
+    sendResponse(powerManager->getPowerInfo());
     break;
 
   case BLE_CMD_POWER_ON:
+    powerManager->trySetSBCPower(true);
+    if (statusManager) {
+      statusManager->setStatus(STATUS_POWER_ON, LED_BLINK_DURATION);
+    }
     sendResponse(BLE_CMD_WAS_SUCCESSFUL);
     break;
 
   case BLE_CMD_POWER_OFF:
+    powerManager->trySetSBCPower(false);
+    if (statusManager) {
+      statusManager->setStatus(STATUS_POWER_OFF, LED_BLINK_DURATION);
+    }
     sendResponse(BLE_CMD_WAS_SUCCESSFUL);
     break;
 
   case BLE_CMD_SHUTDOWN:
+    powerManager->trySetSBCPower(false);
+    if (statusManager) {
+      statusManager->setStatus(STATUS_SHUTDOWN, 0);
+    }
     sendResponse(BLE_CMD_WAS_SUCCESSFUL);
     break;
 
@@ -457,18 +475,25 @@ void BLEManager::handleCommand(const BLEMessage& message) {
     sendResponse(usbManager->sendSystemPowerKey() ? BLE_CMD_WAS_SUCCESSFUL : BLE_CMD_WAS_FAILURE);
     break;
 
-  case BLE_CMD_GET_SYSTEM_INFO:
+  case BLE_CMD_SYSTEM_INFO:
     DEBUG_PRINTLN("Getting system info");
     sendResponse(systemManager->getSystemInfo());
     break;
 
-  case BLE_CMD_DEEP_SLEEP_STATUS: {
-    DEBUG_PRINTLN("Getting deep sleep status");
-    char statusBuffer[64];
-    const char* enabledStr = systemManager->isDeepSleepEnabled() ? "ENABLED" : "DISABLED";
-    uint32_t timeUntilSleep = systemManager->getTimeUntilDeepSleep();
-    snprintf(statusBuffer, sizeof(statusBuffer), "DEEP_SLEEP_STATUS|%s|%lu", enabledStr, timeUntilSleep);
-    sendResponse(statusBuffer);
+  case BLE_CMD_SYSTEM_RESTART:
+    DEBUG_PRINTLN("Restarting system");
+    if (statusManager) {
+      statusManager->setStatus(STATUS_SHUTDOWN, LED_BLINK_DURATION);
+    }
+    systemManager->notifyActivity();
+    sendResponse(BLE_CMD_WAS_SUCCESSFUL);
+    delay(1000);
+    esp_restart();
+    break;
+
+  case BLE_CMD_DEEP_SLEEP_INFO: {
+    DEBUG_PRINTLN("Getting deep sleep info");
+    sendResponse(systemManager->getDeepSleepInfo());
     break;
   }
 
@@ -490,6 +515,9 @@ void BLEManager::handleCommand(const BLEMessage& message) {
 
   default:
     sendResponse(BLE_CMD_UNKNOWN_STRING);
+    if (statusManager) {
+      statusManager->setStatus(STATUS_BLE_CMD_ERROR, LED_BLINK_DURATION);
+    }
     break;
   }
 }

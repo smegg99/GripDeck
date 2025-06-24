@@ -1,5 +1,6 @@
 // src/managers/PowerManager.cpp
 #include "managers/PowerManager.h"
+#include "managers/StatusManager.h"
 #include "config/Config.h"
 #include "utils/DebugSerial.h"
 #include <Wire.h>
@@ -7,6 +8,7 @@
 #include <managers/USBManager.h>
 
 extern USBManager* usbManager;
+extern StatusManager* statusManager;
 
 PowerManager::PowerManager() {}
 
@@ -30,7 +32,8 @@ bool PowerManager::begin() {
     return false;
   }
 
-  trySetSBCPower(false);
+  DEBUG_PRINTLN("Forcing SBC power OFF during initialization");
+  digitalWrite(PIN_SBC_POWER_MOSFET, LOW);
   setLEDPower(0);
 
   DEBUG_PRINTLN("PowerManager initialized successfully");
@@ -44,18 +47,41 @@ void PowerManager::update() {
   readChannels(batteryData, chargerData);
   setPowerData(batteryData, chargerData);
 
-  DEBUG_PRINTLN(powerData.toString());
+  if (!shouldSBCBePoweredOn() && isSBCPowerOn()) {
+    DEBUG_PRINTLN("SBC power is ON but should be OFF, turning it OFF");
+    trySetSBCPower(false);
+  }
+
+  bool currentPowerSavingMode = isPowerSavingMode();
+  if (statusManager && currentPowerSavingMode != previousPowerSavingMode) {
+    statusManager->setLowPowerMode(currentPowerSavingMode);
+    previousPowerSavingMode = currentPowerSavingMode;
+  }
+
+  PowerData currentPowerData = getPowerData();
+  DEBUG_PRINTLN(currentPowerData.toString());
 }
 
 void PowerManager::trySetSBCPower(bool on) {
   if (on) {
     DEBUG_PRINTLN("Checking if SBC can be powered on...");
-    if (!canPowerOnSBC()) {
+    DEBUG_PRINTLN("About to call canPowerOnSBC()");
+    bool canPower = canPowerOnSBC();
+    DEBUG_PRINTF("canPowerOnSBC() returned: %s\n", canPower ? "true" : "false");
+    bool sbcAlreadyOn = isSBCPowerOn();
+    DEBUG_PRINTF("isSBCPowerOn() returned: %s\n", sbcAlreadyOn ? "true" : "false");
+
+    if (!canPower || sbcAlreadyOn) {
       DEBUG_PRINTLN("WARNING: SBC cannot be powered on due to low battery or already powered on");
       return;
     }
     DEBUG_PRINTLN("Turning SBC power ON");
     digitalWrite(PIN_SBC_POWER_MOSFET, HIGH);
+
+    if (!usbManager) {
+      DEBUG_PRINTLN("WARNING: USBManager not available, cannot check USB connection");
+      return;
+    }
 
     unsigned long startTime = millis();
     while (!usbManager->isUSBConnected() && millis() - startTime < USB_CONNECTION_TIMEOUT) {
@@ -73,6 +99,13 @@ void PowerManager::trySetSBCPower(bool on) {
   }
   else {
     DEBUG_PRINTLN("Turning SBC power OFF");
+
+    if (!usbManager) {
+      DEBUG_PRINTLN("WARNING: USBManager not available, forcing power off without graceful shutdown");
+      digitalWrite(PIN_SBC_POWER_MOSFET, LOW);
+      return;
+    }
+
     usbManager->sendSystemPowerKey();
 
     unsigned long startTime = millis();
@@ -89,6 +122,11 @@ void PowerManager::trySetSBCPower(bool on) {
 
     digitalWrite(PIN_SBC_POWER_MOSFET, LOW);
   }
+}
+
+bool PowerManager::shouldSBCBePoweredOn() {
+  PowerData currentPowerData = getPowerData();
+  return currentPowerData.battery.percentage >= BATTERY_MIN_PERCENTAGE;
 }
 
 void PowerManager::setLEDPower(uint8_t brightness) {

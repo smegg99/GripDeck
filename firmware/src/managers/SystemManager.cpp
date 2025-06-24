@@ -91,11 +91,11 @@ void SystemManager::updateDeepSleepWatchdog() {
 }
 
 bool SystemManager::shouldEnterDeepSleep() {
-  if (powerManager && powerManager->isSBCPowerOn()) {
+  if (powerManager->isSBCPowerOn()) {
     return false;
   }
 
-  if (bleManager && bleManager->isConnected()) {
+  if (bleManager->isConnected()) {
     return false;
   }
 
@@ -193,11 +193,19 @@ const char* SystemManager::getSystemInfo() const {
   uint32_t uptimeSeconds = millis() / 1000;
 
   snprintf(info, sizeof(info),
-    "SYSTEM_INFO|%s|%s|%s|%lu",
+    "SYSTEM_INFO:%s|%s|%s|%lu",
     wifiMac.c_str(),
     formattedBtMac.c_str(),
     fwVersion,
     uptimeSeconds);
 
   return info;
+}
+
+const char* SystemManager::getDeepSleepInfo() const {
+  static char statusBuffer[64];
+  const char* enabledStr = isDeepSleepEnabled() ? "ENABLED" : "DISABLED";
+  uint32_t timeUntilSleep = getTimeUntilDeepSleep();
+  snprintf(statusBuffer, sizeof(statusBuffer), "DEEP_SLEEP_INFO:%s|%lu", enabledStr, timeUntilSleep);
+  return statusBuffer;
 }

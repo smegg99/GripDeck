@@ -8,11 +8,13 @@
 #include "managers/USBManager.h"
 #include "managers/BLEManager.h"
 #include "managers/SystemManager.h"
+#include "managers/StatusManager.h"
 
 PowerManager* powerManager;
 USBManager* usbManager;
 BLEManager* bleManager;
 SystemManager* systemManager;
+StatusManager* statusManager;
 
 TaskHandle_t powerTaskHandle = nullptr;
 
@@ -22,6 +24,7 @@ void powerManagerTask(void* arg);
 void usbManagerTask(void* arg);
 void bleManagerTask(void* arg);
 void systemManagerTask(void* arg);
+void statusManagerTask(void* arg);
 
 void initializeHardware() {
   DEBUG_PRINTLN("Initializing hardware...");
@@ -119,7 +122,13 @@ void setup() {
     return;
   }
 
-  // If we woke up from deep sleep, notify the system manager
+  statusManager = new StatusManager();
+  if (!statusManager->begin()) {
+    DEBUG_PRINTLN("ERROR: StatusManager initialization failed");
+    esp_restart();
+    return;
+  }
+
   if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1) {
     systemManager->notifyWakeFromDeepSleep();
   }
@@ -188,6 +197,22 @@ void setup() {
     return;
   }
   DEBUG_PRINTLN("SystemTask created successfully");
+
+  result = xTaskCreatePinnedToCore(
+    statusManagerTask,
+    "StatusTask",
+    TASK_STACK_SIZE_LARGE,
+    nullptr,
+    TASK_PRIORITY_NORMAL,
+    nullptr,
+    0
+  );
+  if (result != pdPASS) {
+    DEBUG_PRINTF("ERROR: Failed to create StatusTask (error code %d)\n", result);
+    esp_restart();
+    return;
+  }
+  DEBUG_PRINTLN("StatusTask created successfully");
   DEBUG_PRINTLN("=== GripDeck SBC Controller Initialization Complete ===\n\n\n");
 
   if (wokeUpFromPowerButton) {
@@ -197,13 +222,34 @@ void setup() {
 }
 
 void powerManagerTask(void* arg) {
-  // Add task to watchdog
   esp_task_wdt_add(NULL);
 
+  static uint32_t lastDebugTime = 0;
+  static uint32_t lastHeapCheckTime = 0;
+  const uint32_t debugInterval = 10000;
+  const uint32_t heapCheckInterval = 5000; 
+
   for (;;) {
+    uint32_t currentTime = millis();
+
+    if (currentTime - lastHeapCheckTime >= heapCheckInterval) {
+      uint32_t freeHeap = ESP.getFreeHeap();
+      uint32_t minFreeHeap = ESP.getMinFreeHeap();
+      if (freeHeap < 10000) {
+        DEBUG_PRINTF("WARNING: Low heap memory! Free: %u bytes, Min: %u bytes\n",
+          freeHeap, minFreeHeap);
+      }
+      lastHeapCheckTime = currentTime;
+    }
+
+    if (currentTime - lastDebugTime >= debugInterval) {
+      DEBUG_PRINTF("PowerTask: Running at %u ms (free stack: %u bytes)\n",
+        currentTime, uxTaskGetStackHighWaterMark(NULL));
+      lastDebugTime = currentTime;
+    }
+
     powerManager->update();
 
-    // Feed the watchdog
     esp_task_wdt_reset();
 
     delay(TASK_INTERVAL_POWER);
@@ -249,6 +295,28 @@ void systemManagerTask(void* arg) {
     esp_task_wdt_reset();
 
     delay(TASK_INTERVAL_SYSTEM);
+  }
+}
+
+void statusManagerTask(void* arg) {
+  esp_task_wdt_add(NULL);
+
+  static uint32_t lastDebugTime = 0;
+  const uint32_t debugInterval = 15000; 
+
+  for (;;) {
+    uint32_t currentTime = millis();
+    if (currentTime - lastDebugTime >= debugInterval) {
+      DEBUG_PRINTF("StatusTask: Running at %u ms (free stack: %u bytes)\n",
+        currentTime, uxTaskGetStackHighWaterMark(NULL));
+      lastDebugTime = currentTime;
+    }
+
+    statusManager->update();
+
+    esp_task_wdt_reset();
+
+    delay(TASK_INTERVAL_STATUS);
   }
 }
 

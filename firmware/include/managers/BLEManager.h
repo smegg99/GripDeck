@@ -14,9 +14,12 @@
 #include "../config/Config.h"
 #include <utils/DebugSerial.h>
 
+// Forward declarations
+class StatusManager;
+
 // CMD:DATA|DATA... format
 enum BLECommand {
-  BLE_CMD_STATUS,                   // STATUS -> BATTERY_VOLTAGE|BATTERY_CURRENT|CHARGER_VOLTAGE|CHARGER_CURRENT|BATTERY_PERCENTAGE
+  BLE_CMD_POWER_INFO,                   // POWER_INFO -> POWER_INFO:BATTERY_VOLTAGE|BATTERY_CURRENT|CHARGER_VOLTAGE|CHARGER_CURRENT|BATTERY_PERCENTAGE
   BLE_CMD_POWER_ON,                 // POWER_ON -> WAS_SUCCESSFUL
   BLE_CMD_POWER_OFF,                // POWER_OFF -> WAS_SUCCESSFUL
   BLE_CMD_SHUTDOWN,                 // SHUTDOWN -> WAS_SUCCESSFUL
@@ -35,12 +38,13 @@ enum BLECommand {
   BLE_CMD_HID_GAMEPAD_PRESS,        // HID_GAMEPAD_PRESS:BUTTON -> WAS_SUCCESSFUL
   BLE_CMD_HID_GAMEPAD_HOLD,         // HID_GAMEPAD_HOLD:BUTTON -> WAS_SUCCESSFUL
   BLE_CMD_HID_GAMEPAD_RELEASE,      // HID_GAMEPAD_RELEASE:BUTTON -> WAS_SUCCESSFUL
-  BLE_CMD_HID_GAMEPAD_RIGHT_AXIS,   // HID_GAMEPAD_RIGHT_AXIS:AXIS:VALUE -> WAS_SUCCESSFUL
-  BLE_CMD_HID_GAMEPAD_LEFT_AXIS,    // HID_GAMEPAD_LEFT_AXIS:AXIS:VALUE -> WAS_SUCCESSFUL
+  BLE_CMD_HID_GAMEPAD_RIGHT_AXIS,   // HID_GAMEPAD_RIGHT_AXIS:X:Y -> WAS_SUCCESSFUL
+  BLE_CMD_HID_GAMEPAD_LEFT_AXIS,    // HID_GAMEPAD_LEFT_AXIS:X:Y -> WAS_SUCCESSFUL
 
   BLE_CMD_HID_SYSTEM_POWER,         // HID_SYSTEM_POWER -> WAS_SUCCESSFUL
-  BLE_CMD_GET_SYSTEM_INFO,          // GET_SYSTEM_INFO -> SYSTEM_INFO|WIFI_MAC|BLUETOOTH_MAC|FIRMWARE_VERSION|UPTIME
-  BLE_CMD_DEEP_SLEEP_STATUS,        // DEEP_SLEEP_STATUS -> ENABLED|TIME_UNTIL_SLEEP_MS
+  BLE_CMD_SYSTEM_INFO,              // SYSTEM_INFO -> SYSTEM_INFO:WIFI_MAC|BLUETOOTH_MAC|FIRMWARE_VERSION|UPTIME
+  BLE_CMD_SYSTEM_RESTART,           // SYSTEM_RESTART -> WAS_SUCCESSFUL
+  BLE_CMD_DEEP_SLEEP_INFO,          // DEEP_SLEEP_INFO -> DEEP_SLEEP_INFO:ENABLED|TIME_UNTIL_SLEEP_MS
   BLE_CMD_DEEP_SLEEP_ENABLE,        // DEEP_SLEEP_ENABLE -> WAS_SUCCESSFUL
   BLE_CMD_DEEP_SLEEP_DISABLE,       // DEEP_SLEEP_DISABLE -> WAS_SUCCESSFUL
   BLE_CMD_HELP,                     // HELP -> COMMAND_LIST
@@ -52,7 +56,7 @@ static const struct {
   const char* name;
   BLECommand command;
 } commandMap[] = {
-  {"STATUS", BLE_CMD_STATUS},
+  {"POWER_INFO", BLE_CMD_POWER_INFO},
   {"POWER_ON", BLE_CMD_POWER_ON},
   {"POWER_OFF", BLE_CMD_POWER_OFF},
   {"SHUTDOWN", BLE_CMD_SHUTDOWN},
@@ -71,23 +75,25 @@ static const struct {
   {"HID_GAMEPAD_RIGHT_AXIS", BLE_CMD_HID_GAMEPAD_RIGHT_AXIS},
   {"HID_GAMEPAD_LEFT_AXIS", BLE_CMD_HID_GAMEPAD_LEFT_AXIS},
   {"HID_SYSTEM_POWER", BLE_CMD_HID_SYSTEM_POWER},
-  {"GET_SYSTEM_INFO", BLE_CMD_GET_SYSTEM_INFO},
-  {"DEEP_SLEEP_STATUS", BLE_CMD_DEEP_SLEEP_STATUS},
+  {"SYSTEM_INFO", BLE_CMD_SYSTEM_INFO},
+  {"SYSTEM_RESTART", BLE_CMD_SYSTEM_RESTART},
+  {"DEEP_SLEEP_INFO", BLE_CMD_DEEP_SLEEP_INFO},
   {"DEEP_SLEEP_ENABLE", BLE_CMD_DEEP_SLEEP_ENABLE},
   {"DEEP_SLEEP_DISABLE", BLE_CMD_DEEP_SLEEP_DISABLE},
   {"HELP", BLE_CMD_HELP}
 };
 
 static const char* BLE_HELP_STRING =
-"Available Commands:\n"
+"\n\n\nAvailable Commands:\n"
 "\n"
 "=== System Commands ===\n"
-"STATUS - Get battery/power status\n"
+"POWER_INFO - Get battery/power info\n"
 "POWER_ON - Turn on SBC power\n"
 "POWER_OFF - Turn off SBC power\n"
 "SHUTDOWN - Shutdown system\n"
-"GET_SYSTEM_INFO - Get system information\n"
-"DEEP_SLEEP_STATUS - Get deep sleep status\n"
+"SYSTEM_INFO - Get system information\n"
+"SYSTEM_RESTART - Restart system\n"
+"DEEP_SLEEP_INFO - Get deep sleep info\n"
 "DEEP_SLEEP_ENABLE - Enable deep sleep watchdog\n"
 "DEEP_SLEEP_DISABLE - Disable deep sleep watchdog\n"
 "\n"
@@ -108,8 +114,8 @@ static const char* BLE_HELP_STRING =
 "HID_GAMEPAD_PRESS:BTN - Press and release gamepad button\n"
 "HID_GAMEPAD_HOLD:BTN - Hold gamepad button down\n"
 "HID_GAMEPAD_RELEASE:BTN - Release held gamepad button\n"
-"HID_GAMEPAD_RIGHT_AXIS:AXIS|VALUE - Set right stick axis\n"
-"HID_GAMEPAD_LEFT_AXIS:AXIS|VALUE - Set left stick axis\n"
+"HID_GAMEPAD_RIGHT_AXIS:X|Y - Set right stick X,Y values\n"
+"HID_GAMEPAD_LEFT_AXIS:X|Y - Set left stick X,Y values\n"
 "\n"
 "=== HID System Commands ===\n"
 "HID_SYSTEM_POWER - Send system power key\n"
@@ -117,7 +123,7 @@ static const char* BLE_HELP_STRING =
 "=== Help ===\n"
 "HELP - Show this command list\n"
 "\n"
-"Format: CMD:DATA|DATA... (use : for command data, | for separators)";
+"Format: CMD:DATA|DATA... (use : for command data, | for separators)\n\n\n";
 
 static const char* BLE_CMD_UNKNOWN_STRING =
 "Unknown command, type 'HELP' for a list of available commands.";
