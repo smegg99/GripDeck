@@ -513,25 +513,53 @@ uint32_t PowerManager::calculateEstimatedTimeToFullyCharge(float chargerCurrent,
 }
 
 uint32_t PowerManager::calculateEstimatedTimeToFullyDischarge(float chargerCurrent, float chargerVoltage, float batteryCurrent, float batteryVoltage, float percentage) {
-  if (batteryCurrent >= 0.0f) {
-    DEBUG_VERBOSE_PRINTF("Discharge Time: 0 (battery not discharging: %.6fA)\n", batteryCurrent);
-    return 0;
-  }
+  DEBUG_VERBOSE_PRINTF("Discharge Time Calculation - Charger: %.6fA/%.3fV, Battery: %.6fA/%.3fV, Percentage: %.1f%%\n",
+    chargerCurrent, chargerVoltage, batteryCurrent, batteryVoltage, percentage);
 
   if (percentage <= 1.0f) {
     DEBUG_VERBOSE_PRINTF("Discharge Time: 0 (battery too low: %.1f%%)\n", percentage);
     return 0;
   }
 
-  float dischargeCurrent = -batteryCurrent;
-  float dischargeRatePerHour = (dischargeCurrent * 1000.0f * 100.0f) / BATTERY_CAPACITY_MAH;
+  bool chargerActive = (chargerCurrent > 0.01f && chargerVoltage >= MIN_BATTERY_CHARGING_VOLTAGE);
 
+  float actualDischargeCurrent = 0.0f;
+
+  if (chargerActive) {
+    if (batteryCurrent >= 0.0f) {
+      DEBUG_VERBOSE_PRINTF("Discharge Time: 0 (charging with charger connected: %.6fA)\n", batteryCurrent);
+      return 0;
+    }
+    actualDischargeCurrent = -batteryCurrent;
+    DEBUG_VERBOSE_PRINTF("Charger connected but discharging - Net discharge: %.6fA\n", actualDischargeCurrent);
+  }
+  else {
+    if (batteryCurrent < 0.0f) {
+      actualDischargeCurrent = -batteryCurrent;
+      DEBUG_VERBOSE_PRINTF("No charger, negative current - Discharge: %.6fA\n", actualDischargeCurrent);
+    }
+    else if (batteryCurrent > 0.01f) {
+      actualDischargeCurrent = batteryCurrent;
+      DEBUG_VERBOSE_PRINTF("No charger, positive current (sensor offset) - Using as discharge: %.6fA\n", actualDischargeCurrent);
+    }
+    else {
+      actualDischargeCurrent = 0.050f;
+      DEBUG_VERBOSE_PRINTF("No charger, minimal current - Using estimated consumption: %.6fA\n", actualDischargeCurrent);
+    }
+  }
+
+  if (actualDischargeCurrent <= 0.001f) {
+    DEBUG_VERBOSE_PRINTF("Discharge Time: 0 (discharge current too low: %.6fA)\n", actualDischargeCurrent);
+    return 0;
+  }
+
+  float dischargeRatePerHour = (actualDischargeCurrent * 1000.0f * 100.0f) / BATTERY_CAPACITY_MAH;
   float remainingPercentage = percentage - 1.0f;
   float hoursToDischarge = remainingPercentage / dischargeRatePerHour;
   uint32_t secondsToDischarge = (uint32_t)(hoursToDischarge * 3600.0f);
 
   DEBUG_VERBOSE_PRINTF("Discharge Time Calculation - Current: %.6fA, Rate: %.3f%%/h, Hours: %.3f, ETA: %us\n",
-    dischargeCurrent, dischargeRatePerHour, hoursToDischarge, secondsToDischarge);
+    actualDischargeCurrent, dischargeRatePerHour, hoursToDischarge, secondsToDischarge);
 
   return secondsToDischarge;
 }

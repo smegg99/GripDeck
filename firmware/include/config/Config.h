@@ -48,7 +48,7 @@
 // POWER MANAGEMENT CONFIGURATION
 // ====================================================================
 #define BATTERY_MIN_PERCENTAGE              5       // Minimum battery percentage to allow SBC startup
-#define BATTERY_CAPACITY_MAH                3000    // Battery capacity in mAh
+#define BATTERY_CAPACITY_MAH                1000    // Battery capacity in mAh
 #define BATTERY_SAVING_MODE                 15      // Battery percentage for low power mode
 #define MIN_BATTERY_CHARGING_VOLTAGE        4.0     // Minimum voltage to consider charging, I have perhaps lowered it too much but thats how much my front panel USB port provides kek
 
@@ -158,9 +158,9 @@
 // ====================================================================
 // DEBUG CONFIGURATION
 // ====================================================================
-#define DEBUG_ENABLED                       true
-#define DEBUG_SERIAL_ENABLED                true    // Enable secondary serial for debug output
-#define DEBUG_SERIAL_BAUD_RATE              115200  // Debug serial baud rate
-#define DEBUG_VERBOSE_LOGGING               true    // Enable verbose logging for debugging
+#define DEBUG_ENABLED                       false
+#define DEBUG_SERIAL_ENABLED                false     // Enable secondary serial for debug output
+#define DEBUG_SERIAL_BAUD_RATE              115200   // Debug serial baud rate
+#define DEBUG_VERBOSE_LOGGING               false     // Enable verbose logging for debugging
 
 #endif // CONFIG_H
