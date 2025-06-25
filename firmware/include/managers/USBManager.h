@@ -9,7 +9,10 @@
 #include <USBHIDMouse.h>
 #include <USBHIDGamepad.h>
 #include <USBHIDConsumerControl.h>
+#include <USBHID.h>
 #include <USB.h>
+
+#include <classes/GripDeckVendorHID.h>
 
 enum HIDCommand {
   HID_KEYBOARD_PRESS,
@@ -47,21 +50,49 @@ struct SystemStatus {
   uint8_t batteryPercentage;
 };
 
+struct __attribute__((packed)) StatusPayload {
+  uint16_t battery_voltage_mv;
+  int16_t battery_current_ma;
+  uint16_t charger_voltage_mv;
+  int16_t charger_current_ma;
+  uint16_t charger_power_mw;
+  uint8_t charger_connected;
+  uint8_t battery_percentage;
+  uint32_t uptime_seconds;
+  uint32_t to_fully_discharge_s;
+  uint32_t to_fully_charge_s;
+  uint8_t reserved[8];
+};
+
+struct __attribute__((packed)) InfoPayload {
+  uint16_t firmware_version;
+  char serial_number[12];
+  uint8_t reserved[8];
+};
+
 class USBManager {
 private:
   USBHIDKeyboard keyboard;
   USBHIDMouse mouse;
   USBHIDGamepad gamepad;
   USBHIDConsumerControl consumerControl;
+  USBHID hid;
+  GripDeckVendorHID* vendorDevice;
 
   QueueHandle_t hidQueue;
   SemaphoreHandle_t hidMutex;
 
   bool usbConnected = false;
   bool initialized = false;
+  uint32_t sequenceCounter = 0;
+
+  // Vendor protocol response storage
+  VendorPacket vendorResponse;
+  bool vendorResponseReady = false;
 
   static USBManager* instance;
 
+private:
   void processHIDCommands();
   void executeHIDCommand(const HIDMessage& command);
   void checkInitialUSBStatus();
@@ -71,8 +102,20 @@ private:
   bool isValidKey(uint8_t key);
   bool isValidMouseButton(uint8_t button);
 
+  void sendVendorResponse(const VendorPacket& request, VendorResponse response_type, const void* payload, size_t payload_size);
+  void handlePingCommand(const VendorPacket& request);
+  void handleGetStatusCommand(const VendorPacket& request);
+  void handleGetInfoCommand(const VendorPacket& request);
+  StatusPayload buildStatusPayload();
+  InfoPayload buildInfoPayload();
+
   inline bool isUSBHIDEnabled() const { return !DISABLE_USB_HID; }
+
 public:
+  void handleVendorReport(uint8_t report_id, const uint8_t* buffer, uint16_t len);
+  bool getVendorResponse(VendorPacket* response);
+  static USBManager* getInstance() { return instance; }
+
   USBManager();
   ~USBManager();
 
@@ -95,10 +138,6 @@ public:
   bool sendGamepadLeftAxis(int16_t x, int16_t y);
 
   bool sendSystemPowerKey();
-
-  // This uses a custom protocol to send system status reports
-  // TODO: Implement this
-  bool sendStatusReport(const SystemStatus& status);
 
   bool isUSBConnected() const { return usbConnected; }
 };

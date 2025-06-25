@@ -2,6 +2,8 @@
 
 #include "managers/USBManager.h"
 #include "managers/SystemManager.h"
+#include "managers/PowerManager.h"
+#include <classes/GripDeckVendorHID.h>
 #include <utils/DebugSerial.h>
 
 #include <USB.h>
@@ -10,13 +12,20 @@
 #include "USBCDC.h"
 
 extern SystemManager* systemManager;
+extern PowerManager* powerManager;
+
+extern const uint8_t vendorReportDescriptor[];
+extern const size_t vendorReportDescriptorSize;
 
 USBManager* USBManager::instance = nullptr;
 
-USBManager::USBManager() : usbConnected(false), initialized(false) {
+USBManager::USBManager() : usbConnected(false), initialized(false), sequenceCounter(0) {
   instance = this;
   hidQueue = nullptr;
   hidMutex = nullptr;
+  vendorDevice = nullptr;
+  vendorResponseReady = false;
+  memset(&vendorResponse, 0, sizeof(vendorResponse));
 }
 
 USBManager::~USBManager() {
@@ -28,6 +37,10 @@ USBManager::~USBManager() {
   }
   if (hidMutex) {
     vSemaphoreDelete(hidMutex);
+  }
+  if (vendorDevice) {
+    delete vendorDevice;
+    vendorDevice = nullptr;
   }
 }
 
@@ -115,6 +128,17 @@ bool USBManager::begin() {
 
   DEBUG_PRINTLN("Starting USB subsystem...");
 
+  if (!vendorDevice) {
+    DEBUG_PRINTLN("Creating vendor HID device...");
+    vendorDevice = new GripDeckVendorHID(this, &hid);
+    if (vendorDevice) {
+      DEBUG_PRINTLN("Vendor HID device created successfully");
+    }
+    else {
+      DEBUG_PRINTLN("ERROR: Failed to create vendor HID device");
+    }
+  }
+
   if (!USB.begin()) {
     DEBUG_PRINTLN("ERROR: Failed to initialize USB subsystem");
     return false;
@@ -143,6 +167,16 @@ bool USBManager::begin() {
 
   consumerControl.begin();
   DEBUG_PRINTLN("USB consumer control initialized");
+
+  hid.begin();
+  delay(100);
+  DEBUG_PRINTLN("USB HID subsystem initialized");
+
+  if (vendorDevice) {
+    DEBUG_PRINTLN("Initializing vendor HID device...");
+    vendorDevice->begin();
+    DEBUG_PRINTLN("Vendor HID device initialized");
+  }
 
   usbConnected = false;
 
@@ -618,9 +652,96 @@ bool USBManager::sendSystemPowerKey() {
   return xQueueSend(hidQueue, &message, 0) == pdTRUE;
 }
 
-// TODO: Implement this finally
-bool USBManager::sendStatusReport(const SystemStatus& status) {
-  return true;
+void USBManager::handleVendorReport(uint8_t report_id, const uint8_t* buffer, uint16_t len) {
+  if (!isUSBHIDEnabled() || report_id != VENDOR_REPORT_ID || len != sizeof(VendorPacket)) {
+    DEBUG_PRINTF("Invalid vendor report: ID=%d, len=%d\n", report_id, len);
+    return;
+  }
+
+  const VendorPacket* request = reinterpret_cast<const VendorPacket*>(buffer);
+
+  if (request->magic != PROTOCOL_MAGIC || request->protocol_version != PROTOCOL_VERSION) {
+    DEBUG_PRINTF("Invalid protocol magic/version: magic=0x%04X, version=%d\n",
+      request->magic, request->protocol_version);
+    return;
+  }
+
+  DEBUG_PRINTF("Vendor command received: cmd=0x%02X, seq=%u\n", request->command, request->sequence);
+
+  switch (static_cast<VendorCommand>(request->command)) {
+  case CMD_PING:
+    handlePingCommand(*request);
+    break;
+  case CMD_GET_STATUS:
+    handleGetStatusCommand(*request);
+    break;
+  case CMD_GET_INFO:
+    handleGetInfoCommand(*request);
+    break;
+  default:
+    DEBUG_PRINTF("Unknown vendor command: 0x%02X\n", request->command);
+    break;
+  }
+}
+
+void USBManager::sendVendorResponse(const VendorPacket& request, VendorResponse response_type,
+  const void* payload, size_t payload_size) {
+  vendorResponse = {};
+  vendorResponse.magic = PROTOCOL_MAGIC;
+  vendorResponse.protocol_version = PROTOCOL_VERSION;
+  vendorResponse.command = static_cast<uint8_t>(response_type);
+  vendorResponse.sequence = request.sequence;
+
+  if (payload && payload_size > 0) {
+    size_t copy_size = (payload_size > sizeof(vendorResponse.payload)) ? sizeof(vendorResponse.payload) : payload_size;
+    memcpy(vendorResponse.payload, payload, copy_size);
+  }
+
+  vendorResponseReady = true;
+  DEBUG_PRINTF("Vendor response prepared: resp=0x%02X, seq=%u\n", response_type, vendorResponse.sequence);
+}
+
+void USBManager::handlePingCommand(const VendorPacket& request) {
+  sendVendorResponse(request, RESP_PONG, nullptr, 0);
+}
+
+void USBManager::handleGetStatusCommand(const VendorPacket& request) {
+  StatusPayload payload = buildStatusPayload();
+  sendVendorResponse(request, RESP_STATUS, &payload, sizeof(payload));
+}
+
+void USBManager::handleGetInfoCommand(const VendorPacket& request) {
+  InfoPayload payload = buildInfoPayload();
+  sendVendorResponse(request, RESP_INFO, &payload, sizeof(payload));
+}
+
+StatusPayload USBManager::buildStatusPayload() {
+  StatusPayload payload = {};
+  PowerData powerData = powerManager->getPowerData();
+
+  payload.battery_voltage_mv = static_cast<uint16_t>(powerData.battery.voltage * 1000);
+  payload.battery_current_ma = static_cast<int16_t>(powerData.battery.current * 1000);
+  payload.charger_voltage_mv = static_cast<uint16_t>(powerData.charger.voltage * 1000);
+  payload.charger_current_ma = static_cast<int16_t>(powerData.charger.current * 1000);
+  payload.charger_power_mw = static_cast<uint16_t>(powerData.charger.power * 1000);
+  payload.charger_connected = powerData.charger.connected;
+  payload.battery_percentage = powerData.battery.percentage;
+  payload.uptime_seconds = static_cast<uint32_t>(millis() / 1000);
+  payload.to_fully_discharge_s = powerData.battery.toFullyDischargeMs / 1000;
+  payload.to_fully_charge_s = powerData.charger.toFullyChargeMs / 1000;
+
+  return payload;
+}
+
+InfoPayload USBManager::buildInfoPayload() {
+  InfoPayload payload = {};
+
+  payload.firmware_version = FIRMWARE_VERSION;
+
+  strncpy(payload.serial_number, USB_SERIAL_NUMBER, sizeof(payload.serial_number) - 1);
+  payload.serial_number[sizeof(payload.serial_number) - 1] = '\0';
+
+  return payload;
 }
 
 bool USBManager::isValidKey(uint8_t key) {
@@ -667,7 +788,7 @@ bool USBManager::isValidKey(uint8_t key) {
 
   DEBUG_PRINTF("Key validation: Key code %d may not be valid\n", key);
   return true;
-  }
+}
 
 bool USBManager::isValidMouseButton(uint8_t button) {
   if (!isUSBHIDEnabled()) return true;
@@ -690,4 +811,26 @@ void USBManager::checkInitialUSBStatus() {
   }
 
   DEBUG_PRINTF("Initial USB connection status: %s\n", usbConnected ? "Connected" : "Disconnected");
+}
+
+bool USBManager::getVendorResponse(VendorPacket* response) {
+  if (!response) {
+    return false;
+  }
+
+  if (vendorResponseReady) {
+    *response = vendorResponse;
+    vendorResponseReady = false;
+    DEBUG_PRINTF("Vendor response retrieved: resp=0x%02X, seq=%u\n", response->command, response->sequence);
+    return true;
+  }
+
+  *response = {};
+  response->magic = PROTOCOL_MAGIC;
+  response->protocol_version = PROTOCOL_VERSION;
+  response->command = static_cast<uint8_t>(RESP_ERROR);
+  response->sequence = 0;
+
+  DEBUG_PRINTLN("ERROR: No vendor response ready, returning error response");
+  return true;
 }

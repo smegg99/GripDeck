@@ -33,7 +33,7 @@
 // ====================================================================
 #define INA3221_I2C_ADDRESS                 0x40
 #define INA3221_CHANNEL_CHARGER             1   // Channel 1: 5V input voltage/current
-#define INA3221_CHANNEL_BATTERY             3   // Channel 3: LiPo battery voltage/current
+#define INA3221_CHANNEL_BATTERY             2   // Channel 2: LiPo battery voltage/current
 #define INA3221_SHUNT_RESISTANCE            0.1 // Shunt resistance in MOhms, make sure to match your hardware
 
 // INA3221 Register Addresses
@@ -94,6 +94,14 @@
 #define USB_HID_KEYBOARD_PRESS_DELAY        50      // Delay after pressing a key before releasing it (ms)
 #define USB_HID_MOUSE_PRESS_DELAY           50      // Delay after pressing a mouse button before releasing it (ms)
 #define USB_HID_GAMEPAD_PRESS_DELAY         50      // Delay after pressing a gamepad button before releasing it (ms)
+
+// ====================================================================
+// USB VENDOR HID CONFIGURATION
+// ====================================================================
+#define VENDOR_REPORT_ID          6
+#define VENDOR_REPORT_SIZE        32
+#define PROTOCOL_VERSION          0x01
+#define PROTOCOL_MAGIC            0x4744  // "GD" in ASCII
 
 // ====================================================================
 // BLE CONFIGURATION

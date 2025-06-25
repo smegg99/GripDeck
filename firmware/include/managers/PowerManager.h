@@ -13,25 +13,27 @@
 class StatusManager;
 
 struct BatteryData {
-  float voltage;          // Battery voltage (V)
-  float current;          // Battery current (A) - positive = charging, negative = discharging
-  float power;            // Battery power (W)
-  float percentage;       // Battery percentage (0-100%)
+  float voltage;               // Battery voltage (V)
+  float current;               // Battery current (A) - positive = charging, negative = discharging
+  float power;                 // Battery power (W)
+  float percentage;            // Battery percentage (0-100%)
+  uint32_t toFullyDischargeMs; // Estimated time to fully discharge in milliseconds
 
   String toString() const {
     return "Battery: " + String(voltage, 3) + "V, " +
       String(current, 3) + "A, " +
       String(power, 3) + "W, " +
       String(percentage, 1) + "%";
+    ", ETA: " + (toFullyDischargeMs > 0 ? String(toFullyDischargeMs / 1000) + "s" : "N/A");
   }
 };
 
 struct ChargerData {
-  float voltage;          // Input voltage (V)
-  float current;          // Input current (A)
-  float power;            // Input power (W)
-  bool connected;         // Is charger connected
-  float toFullyChargeMs;  // Estimated time to fully charge in milliseconds
+  float voltage;             // Input voltage (V)
+  float current;             // Input current (A)
+  float power;               // Input power (W)
+  bool connected;            // Is charger connected
+  uint32_t toFullyChargeMs;  // Estimated time to fully charge in milliseconds
 
   String toString() const {
     String etaStr = "";
@@ -98,7 +100,9 @@ private:
   bool shouldSBCBePoweredOn();
 
   float calculateBatteryPercentage(float current, float voltage);
-  float calculateEstimatedTimeToFullyCharge(float chargerCurrent, float chargerVoltage, float batteryCurrent, float batteryVoltage, float percentage);
+  uint32_t calculateEstimatedTimeToFullyCharge(float chargerCurrent, float chargerVoltage, float batteryCurrent, float batteryVoltage, float percentage);
+
+  uint32_t calculateEstimatedTimeToFullyDischarge(float chargerCurrent, float chargerVoltage, float batteryCurrent, float batteryVoltage, float percentage);
 public:
   PowerManager();
   ~PowerManager();
@@ -164,12 +168,15 @@ public:
     PowerData data = getPowerData();
 
     snprintf(info, sizeof(info),
-      "POWER_INFO:%.3f|%.3f|%.3f|%.3f|%.1f",
+      "POWER_INFO:%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.1f",
       data.battery.voltage,
       data.battery.current,
+      data.battery.toFullyDischargeMs / 1000.0f,
       data.charger.voltage,
       data.charger.current,
-      data.battery.percentage);
+      data.charger.toFullyChargeMs / 1000.0f,
+      data.battery.percentage
+    );
 
     return info;
   }

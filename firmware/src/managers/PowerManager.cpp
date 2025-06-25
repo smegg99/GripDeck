@@ -87,15 +87,11 @@ void PowerManager::trySetSBCPower(bool on) {
 
     if (!canPower || sbcAlreadyOn) {
       DEBUG_PRINTLN("WARNING: SBC cannot be powered on due to low battery or already powered on");
+      statusManager->setStatus(STATUS_POWER_OFF, LED_BLINK_DURATION);
       return;
     }
     DEBUG_PRINTLN("Turning SBC power ON");
     digitalWrite(PIN_SBC_POWER_MOSFET, HIGH);
-
-    if (!usbManager) {
-      DEBUG_PRINTLN("WARNING: USBManager not available, cannot check USB connection");
-      return;
-    }
 
     unsigned long startTime = millis();
     while (!usbManager->isUSBConnected() && millis() - startTime < USB_CONNECTION_TIMEOUT) {
@@ -189,21 +185,31 @@ float PowerManager::readShuntVoltage(uint8_t channel) {
   case 1: reg = INA3221_CHANNEL_1_SHUNT_REGISTER; break;
   case 2: reg = INA3221_CHANNEL_2_SHUNT_REGISTER; break;
   case 3: reg = INA3221_CHANNEL_3_SHUNT_REGISTER; break;
-  default: return 0.0f;
+  default:
+    DEBUG_PRINTF("ERROR: Invalid channel %d for shunt voltage reading\n", channel);
+    return 0.0f;
   }
 
   Wire.beginTransmission(INA3221_I2C_ADDRESS);
   Wire.write(reg);
   if (Wire.endTransmission() != 0) {
+    DEBUG_PRINTF("ERROR: Failed to write to shunt register 0x%02X (channel %d)\n", reg, channel);
     return 0.0f;
   }
 
   Wire.requestFrom((uint8_t)INA3221_I2C_ADDRESS, (uint8_t)2);
   if (Wire.available() >= 2) {
-    int16_t rawShunt = (Wire.read() << 8) | Wire.read();
-    return (rawShunt >> 3) * 0.00004f;
+    uint16_t rawShunt = (Wire.read() << 8) | Wire.read();
+    int16_t signedShunt = (int16_t)rawShunt;
+    float shuntVoltage = (signedShunt >> 3) * 0.00004f; // 40μV per LSB, right-shift by 3 to ignore reserved bits
+
+    DEBUG_VERBOSE_PRINTF("Ch%d Shunt: Raw=0x%04X, Signed=%d, Voltage=%.6fV\n",
+      channel, rawShunt, signedShunt, shuntVoltage);
+
+    return shuntVoltage;
   }
 
+  DEBUG_PRINTF("ERROR: Failed to read from shunt register 0x%02X (channel %d)\n", reg, channel);
   return 0.0f;
 }
 
@@ -232,11 +238,19 @@ float PowerManager::readBusVoltage(uint8_t channel) {
 }
 
 float PowerManager::readCurrent(uint8_t channel) {
-  return readShuntVoltage(channel) / INA3221_SHUNT_RESISTANCE;
+  float shuntVoltage = readShuntVoltage(channel);
+  if (shuntVoltage == 0.0f) {
+    return 0.0f;
+  }
+
+  float current = shuntVoltage / INA3221_SHUNT_RESISTANCE;
+  DEBUG_VERBOSE_PRINTF("Ch%d Current: Shunt=%.6fV, Resistance=%.3fΩ, Current=%.6fA\n",
+    channel, shuntVoltage, INA3221_SHUNT_RESISTANCE, current);
+
+  return current;
 }
 
 void PowerManager::readChannels(BatteryData& batteryData, ChargerData& chargerData) {
-  // Read battery channel first
   float batteryVoltage = readBusVoltage(INA3221_CHANNEL_BATTERY);
   float batteryCurrent = readCurrent(INA3221_CHANNEL_BATTERY);
   float batteryPercentage = calculateBatteryPercentage(batteryCurrent, batteryVoltage);
@@ -247,10 +261,10 @@ void PowerManager::readChannels(BatteryData& batteryData, ChargerData& chargerDa
     batteryVoltage,
     batteryCurrent,
     batteryVoltage * batteryCurrent,
-    batteryPercentage
+    batteryPercentage,
+    calculateEstimatedTimeToFullyDischarge(0.0f, 0.0f, batteryCurrent, batteryVoltage, batteryPercentage)
   };
 
-  // Read charger channel and use battery data for calculations
   float chargerVoltage = readBusVoltage(INA3221_CHANNEL_CHARGER);
   float chargerCurrent = readCurrent(INA3221_CHANNEL_CHARGER);
 
@@ -277,21 +291,50 @@ bool PowerManager::testINA3221() {
   uint16_t manufacturerID = readRegister(0xFE);
   DEBUG_PRINTF("Manufacturer ID: 0x%04X\n", manufacturerID);
 
+  uint16_t dieID = readRegister(0xFF);
+  DEBUG_PRINTF("Die ID: 0x%04X\n", dieID);
+
   if (manufacturerID == 0x5449) {
     DEBUG_PRINTLN("INA3221 manufacturer ID verified");
-    return true;
+  }
+  else {
+    DEBUG_PRINTF("WARNING: Unexpected manufacturer ID: 0x%04X (expected 0x5449)\n", manufacturerID);
   }
 
-  DEBUG_PRINTF("WARNING: Unexpected manufacturer ID: 0x%04X (expected 0x5449)\n", manufacturerID);
-
-  DEBUG_PRINTLN("Testing INA3221 readings...");
+  DEBUG_PRINTLN("Testing INA3221 raw register readings...");
   for (int channel = 1; channel <= 3; channel++) {
-    float voltage = readBusVoltage(channel);
-    float current = readCurrent(channel);
-    DEBUG_PRINTF("Channel %d: %.3fV, %.6fA\n", channel, voltage, current);
+    uint8_t shuntReg, busReg;
+    switch (channel) {
+    case 1: shuntReg = 0x01; busReg = 0x02; break;
+    case 2: shuntReg = 0x03; busReg = 0x04; break;
+    case 3: shuntReg = 0x05; busReg = 0x06; break;
+    }
+
+    uint16_t rawShunt = readRegister(shuntReg);
+    uint16_t rawBus = readRegister(busReg);
+
+    // Convert raw values
+    int16_t shuntSigned = (int16_t)rawShunt;
+    float shuntVoltage = (shuntSigned >> 3) * 0.00004f; // 40μV per LSB
+    float busVoltage = (rawBus >> 3) * 0.008f; // 8mV per LSB
+    float current = shuntVoltage / INA3221_SHUNT_RESISTANCE;
+
+    DEBUG_PRINTF("Channel %d: Raw Shunt=0x%04X (%d), Raw Bus=0x%04X\n",
+      channel, rawShunt, shuntSigned, rawBus);
+    DEBUG_PRINTF("  Shunt: %.6fV, Bus: %.3fV, Current: %.6fA\n",
+      shuntVoltage, busVoltage, current);
   }
 
+  // Test specific channels used in the application
   float batteryVoltage = readBusVoltage(INA3221_CHANNEL_BATTERY);
+  float batteryCurrent = readCurrent(INA3221_CHANNEL_BATTERY);
+  float chargerVoltage = readBusVoltage(INA3221_CHANNEL_CHARGER);
+  float chargerCurrent = readCurrent(INA3221_CHANNEL_CHARGER);
+
+  DEBUG_PRINTF("Application channels:\n");
+  DEBUG_PRINTF("  Battery (Ch%d): %.3fV, %.6fA\n", INA3221_CHANNEL_BATTERY, batteryVoltage, batteryCurrent);
+  DEBUG_PRINTF("  Charger (Ch%d): %.3fV, %.6fA\n", INA3221_CHANNEL_CHARGER, chargerVoltage, chargerCurrent);
+
   if (batteryVoltage > 0.1f) {
     DEBUG_PRINTF("Found valid battery readings on channel %d: %.3fV\n",
       INA3221_CHANNEL_BATTERY, batteryVoltage);
@@ -321,6 +364,41 @@ bool PowerManager::initializeINA3221() {
     DEBUG_PRINTF("INA3221 not found at address 0x%02X\n", INA3221_I2C_ADDRESS);
     return false;
   }
+
+  // Reset the INA3221 to default configuration
+  DEBUG_PRINTLN("Resetting INA3221 to default configuration...");
+  Wire.beginTransmission(INA3221_I2C_ADDRESS);
+  Wire.write(0x00); // Configuration register
+  Wire.write(0x82); // Reset bit (bit 15) + default config high byte
+  Wire.write(0x00); // Default config low byte
+  if (Wire.endTransmission() != 0) {
+    DEBUG_PRINTLN("ERROR: Failed to reset INA3221");
+    return false;
+  }
+  delay(10); // Wait for reset to complete
+
+  // Configure the INA3221 for continuous mode with all channels enabled
+  DEBUG_PRINTLN("Configuring INA3221 for continuous measurement...");
+  Wire.beginTransmission(INA3221_I2C_ADDRESS);
+  Wire.write(0x00); // Configuration register
+  Wire.write(0x72); // Enable all channels, continuous mode, 1024 samples averaging
+  Wire.write(0x47); // Bus voltage conversion time = 4.156ms, Shunt voltage conversion time = 4.156ms
+  if (Wire.endTransmission() != 0) {
+    DEBUG_PRINTLN("ERROR: Failed to configure INA3221");
+    return false;
+  }
+
+  // Verify configuration was written correctly
+  uint16_t config = readRegister(0x00);
+  DEBUG_PRINTF("INA3221 Configuration register: 0x%04X\n", config);
+
+  // Check if channels are enabled
+  bool ch1_enabled = (config & 0x4000) != 0;
+  bool ch2_enabled = (config & 0x2000) != 0;
+  bool ch3_enabled = (config & 0x1000) != 0;
+  DEBUG_PRINTF("Channel 1 enabled: %s\n", ch1_enabled ? "YES" : "NO");
+  DEBUG_PRINTF("Channel 2 enabled: %s\n", ch2_enabled ? "YES" : "NO");
+  DEBUG_PRINTF("Channel 3 enabled: %s\n", ch3_enabled ? "YES" : "NO");
 
   DEBUG_PRINTF("INA3221 initialized successfully at address 0x%02X\n", INA3221_I2C_ADDRESS);
 
@@ -373,7 +451,7 @@ float PowerManager::calculateBatteryPercentage(float current, float voltage) {
   return finalPercentage;
 }
 
-float PowerManager::calculateEstimatedTimeToFullyCharge(float chargerCurrent, float chargerVoltage, float batteryCurrent, float batteryVoltage, float percentage) {
+uint32_t PowerManager::calculateEstimatedTimeToFullyCharge(float chargerCurrent, float chargerVoltage, float batteryCurrent, float batteryVoltage, float percentage) {
   if (chargerCurrent <= 0.001f || chargerVoltage < MIN_BATTERY_CHARGING_VOLTAGE || percentage >= 99.9f) {
     return 0.0f;
   }
@@ -393,4 +471,26 @@ float PowerManager::calculateEstimatedTimeToFullyCharge(float chargerCurrent, fl
   float hoursToCharge = remainingPercentage / chargeRate;
 
   return hoursToCharge * 3600.0f * 1000.0f;
+}
+
+uint32_t PowerManager::calculateEstimatedTimeToFullyDischarge(float chargerCurrent, float chargerVoltage, float batteryCurrent, float batteryVoltage, float percentage) {
+  if (batteryCurrent >= 0.0f || percentage <= 0.1f) {
+    return 0.0f;
+  }
+
+  float netDischargeCurrent = -batteryCurrent;
+
+  if (netDischargeCurrent <= 0.001f) {
+    return 0.0f;
+  }
+
+  float dischargeRate = (netDischargeCurrent * 1000.0f * 100.0f) / BATTERY_CAPACITY_MAH;
+  if (dischargeRate <= 0.0f) {
+    return 0.0f;
+  }
+
+  float remainingPercentage = percentage;
+  float hoursToDischarge = remainingPercentage / dischargeRate;
+
+  return hoursToDischarge * 3600.0f * 1000.0f;
 }
