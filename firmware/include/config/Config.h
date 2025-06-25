@@ -50,7 +50,7 @@
 #define BATTERY_MIN_PERCENTAGE              5       // Minimum battery percentage to allow SBC startup
 #define BATTERY_CAPACITY_MAH                3000    // Battery capacity in mAh
 #define BATTERY_SAVING_MODE                 15      // Battery percentage for low power mode
-#define MIN_BATTERY_CHARGING_VOLTAGE        4.6     // Minimum voltage to consider charging
+#define MIN_BATTERY_CHARGING_VOLTAGE        4.0     // Minimum voltage to consider charging, I have perhaps lowered it too much but thats how much my front panel USB port provides kek
 
 // ====================================================================
 // POWER BUTTON CONFIGURATION

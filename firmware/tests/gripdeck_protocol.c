@@ -242,12 +242,26 @@ void gripdeck_print_status(const status_payload_t *status) {
   printf("Battery Voltage:       %u mV\n", status->battery_voltage_mv);
   printf("Battery Current:       %d mA\n", status->battery_current_ma);
   printf("Battery Percentage:    %u%%\n", status->battery_percentage);
-  printf("Time to Discharge:     %u seconds\n", status->to_fully_discharge_s);
+  
+  if (status->to_fully_discharge_s > 0) {
+    int hours = status->to_fully_discharge_s / 3600;
+    int minutes = (status->to_fully_discharge_s % 3600) / 60;
+    printf("Time to Discharge:     %uh %um (%u seconds)\n", hours, minutes, status->to_fully_discharge_s);
+  } else {
+    printf("Time to Discharge:     N/A\n");
+  }
+  
   printf("Charger Voltage:       %u mV\n", status->charger_voltage_mv);
   printf("Charger Current:       %d mA\n", status->charger_current_ma);
-  printf("Charger Power:         %u mW\n", status->charger_power_mw);
-  printf("Charger Connected:     %s\n", status->charger_connected ? "Yes" : "No");
-  printf("Time to Full Charge:   %u seconds\n", status->to_fully_charge_s);
+  
+  if (status->to_fully_charge_s > 0) {
+    int hours = status->to_fully_charge_s / 3600;
+    int minutes = (status->to_fully_charge_s % 3600) / 60;
+    printf("Time to Full Charge:   %uh %um (%u seconds)\n", hours, minutes, status->to_fully_charge_s);
+  } else {
+    printf("Time to Full Charge:   N/A\n");
+  }
+  
   printf("Uptime:                %u seconds\n", status->uptime_seconds);
   printf("=======================\n\n");
 }

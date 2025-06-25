@@ -42,8 +42,6 @@ typedef struct __attribute__((packed)) {
   uint16_t charger_voltage_mv;
   int16_t charger_current_ma;
   uint32_t to_fully_charge_s;
-  uint16_t charger_power_mw;
-  uint8_t charger_connected;
   uint8_t battery_percentage;
   uint32_t uptime_seconds;
 } status_payload_t;

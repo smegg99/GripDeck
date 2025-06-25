@@ -5,3 +5,5 @@
 .vscode/ipch
 .notes.txt
 partitions_4mb.csv
+tests/gripdeck_test.o
+tests/gripdeck_protocol.o

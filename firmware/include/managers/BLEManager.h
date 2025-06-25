@@ -84,9 +84,7 @@ static const struct {
 };
 
 static const char* BLE_HELP_STRING =
-"\n\n\nAvailable Commands:\n"
-"\n"
-"=== System Commands ===\n"
+"\n=== System Commands ===\n"
 "POWER_INFO - Get power info (POWER_INFO -> POWER_INFO:BATTERY_VOLTAGE|BATTERY_CURRENT|TIME_TO_DISCHARGE|CHARGER_VOLTAGE|CHARGER_CURRENT|TIME_TO_CHARGE|BATTERY_PERCENTAGE)\n"
 "POWER_ON - Turn on SBC power\n"
 "POWER_OFF - Turn off SBC power\n"
@@ -123,7 +121,7 @@ static const char* BLE_HELP_STRING =
 "=== Help ===\n"
 "HELP - Show this command list\n"
 "\n"
-"Format: CMD:DATA|DATA... (use : for command data, | for separators)\n\n\n";
+"Format: CMD:DATA|DATA... (use : for command data, | for separators)\n";
 
 static const char* BLE_CMD_UNKNOWN_STRING =
 "Unknown command, type 'HELP' for a list of available commands.";

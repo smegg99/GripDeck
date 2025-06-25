@@ -53,15 +53,12 @@ struct SystemStatus {
 struct __attribute__((packed)) StatusPayload {
   uint16_t battery_voltage_mv;
   int16_t battery_current_ma;
+  uint32_t to_fully_discharge_s;
   uint16_t charger_voltage_mv;
   int16_t charger_current_ma;
-  uint16_t charger_power_mw;
-  uint8_t charger_connected;
+  uint32_t to_fully_charge_s;
   uint8_t battery_percentage;
   uint32_t uptime_seconds;
-  uint32_t to_fully_discharge_s;
-  uint32_t to_fully_charge_s;
-  uint8_t reserved[8];
 };
 
 struct __attribute__((packed)) InfoPayload {

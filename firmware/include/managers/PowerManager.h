@@ -8,37 +8,58 @@
 #include <freertos/task.h>
 #include <freertos/semphr.h>
 #include <config/Config.h>
+#include "utils/DebugSerial.h"
 
-// Forward declaration
 class StatusManager;
 
 struct BatteryData {
-  float voltage;               // Battery voltage (V)
-  float current;               // Battery current (A) - positive = charging, negative = discharging
-  float power;                 // Battery power (W)
-  float percentage;            // Battery percentage (0-100%)
-  uint32_t toFullyDischargeMs; // Estimated time to fully discharge in milliseconds
+  float voltage;
+  float current;
+  float power;
+  float percentage;
+  uint32_t toFullyDischargeS;
 
   String toString() const {
+    String etaStr = "";
+    if (toFullyDischargeS > 0) {
+      int totalSeconds = toFullyDischargeS;
+      int hours = totalSeconds / 3600;
+      int minutes = (totalSeconds % 3600) / 60;
+      int seconds = totalSeconds % 60;
+
+      if (hours > 0) {
+        etaStr = String(hours) + "h " + String(minutes) + "m";
+      }
+      else if (minutes > 0) {
+        etaStr = String(minutes) + "m " + String(seconds) + "s";
+      }
+      else {
+        etaStr = String(seconds) + "s";
+      }
+    }
+    else {
+      etaStr = "N/A";
+    }
+
     return "Battery: " + String(voltage, 3) + "V, " +
       String(current, 3) + "A, " +
       String(power, 3) + "W, " +
-      String(percentage, 1) + "%";
-    ", ETA: " + (toFullyDischargeMs > 0 ? String(toFullyDischargeMs / 1000) + "s" : "N/A");
+      String(percentage, 1) + "%" +
+      ", ETA: " + etaStr;
   }
 };
 
 struct ChargerData {
-  float voltage;             // Input voltage (V)
-  float current;             // Input current (A)
-  float power;               // Input power (W)
-  bool connected;            // Is charger connected
-  uint32_t toFullyChargeMs;  // Estimated time to fully charge in milliseconds
+  float voltage;
+  float current;
+  float power;
+  bool connected;
+  uint32_t toFullyChargeS;  
 
   String toString() const {
     String etaStr = "";
-    if (toFullyChargeMs > 0) {
-      int totalSeconds = toFullyChargeMs / 1000;
+    if (toFullyChargeS > 0) {
+      int totalSeconds = toFullyChargeS;
       int minutes = totalSeconds / 60;
       int seconds = totalSeconds % 60;
       etaStr = String(minutes) + "m " + String(seconds) + "s";
@@ -91,6 +112,7 @@ private:
   bool initializeINA3221();
   bool testINA3221();
   void readChannels(BatteryData& batteryData, ChargerData& chargerData);
+  void calculateEstimatedTimes(BatteryData& batteryData, ChargerData& chargerData);
 
   uint16_t readRegister(uint8_t reg);
   float readBusVoltage(uint8_t channel);
@@ -167,16 +189,22 @@ public:
 
     PowerData data = getPowerData();
 
+    DEBUG_VERBOSE_PRINTF("BLE Power Info - Battery: %.3fV/%.3fA/%.1f%%, Discharge: %us, Charger: %.3fV/%.3fA, Charge: %us\n",
+      data.battery.voltage, data.battery.current, data.battery.percentage, data.battery.toFullyDischargeS,
+      data.charger.voltage, data.charger.current, data.charger.toFullyChargeS);
+
     snprintf(info, sizeof(info),
-      "POWER_INFO:%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.1f",
+      "POWER_INFO:%.3f|%.3f|%u|%.3f|%.3f|%u|%.1f",
       data.battery.voltage,
       data.battery.current,
-      data.battery.toFullyDischargeMs / 1000.0f,
+      data.battery.toFullyDischargeS,
       data.charger.voltage,
       data.charger.current,
-      data.charger.toFullyChargeMs / 1000.0f,
+      data.charger.toFullyChargeS,
       data.battery.percentage
     );
+
+    DEBUG_VERBOSE_PRINTF("BLE Power Info String: %s\n", info);
 
     return info;
   }

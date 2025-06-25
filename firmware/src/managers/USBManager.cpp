@@ -721,14 +721,17 @@ StatusPayload USBManager::buildStatusPayload() {
 
   payload.battery_voltage_mv = static_cast<uint16_t>(powerData.battery.voltage * 1000);
   payload.battery_current_ma = static_cast<int16_t>(powerData.battery.current * 1000);
+  payload.to_fully_discharge_s = powerData.battery.toFullyDischargeS;
   payload.charger_voltage_mv = static_cast<uint16_t>(powerData.charger.voltage * 1000);
   payload.charger_current_ma = static_cast<int16_t>(powerData.charger.current * 1000);
-  payload.charger_power_mw = static_cast<uint16_t>(powerData.charger.power * 1000);
-  payload.charger_connected = powerData.charger.connected;
-  payload.battery_percentage = powerData.battery.percentage;
+  payload.to_fully_charge_s = powerData.charger.toFullyChargeS;
+  payload.battery_percentage = static_cast<uint8_t>(powerData.battery.percentage);
   payload.uptime_seconds = static_cast<uint32_t>(millis() / 1000);
-  payload.to_fully_discharge_s = powerData.battery.toFullyDischargeMs / 1000;
-  payload.to_fully_charge_s = powerData.charger.toFullyChargeMs / 1000;
+
+  DEBUG_VERBOSE_PRINTF("USB Status Payload - Batt: %umV/%dmA/%u%%, Charger: %umV/%dmA, Times: %us/%us, Uptime: %us\n",
+    payload.battery_voltage_mv, payload.battery_current_ma, payload.battery_percentage,
+    payload.charger_voltage_mv, payload.charger_current_ma,
+    payload.to_fully_discharge_s, payload.to_fully_charge_s, payload.uptime_seconds);
 
   return payload;
 }

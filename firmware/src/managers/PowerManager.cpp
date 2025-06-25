@@ -61,6 +61,14 @@ void PowerManager::update() {
   readChannels(batteryData, chargerData);
   setPowerData(batteryData, chargerData);
 
+  if (batteryData.toFullyDischargeS == 0) {
+    DEBUG_VERBOSE_PRINTF("Discharge Time Debug - No discharge time calculated\n");
+  }
+  else {
+    DEBUG_VERBOSE_PRINTF("Discharge Time Debug - Calculated: %us (%.1f hours)\n",
+      batteryData.toFullyDischargeS, batteryData.toFullyDischargeS / 3600.0f);
+  }
+
   if (!shouldSBCBePoweredOn() && isSBCPowerOn()) {
     DEBUG_PRINTLN("SBC power is ON but should be OFF, turning it OFF");
     trySetSBCPower(false);
@@ -257,18 +265,18 @@ void PowerManager::readChannels(BatteryData& batteryData, ChargerData& chargerDa
 
   DEBUG_VERBOSE_PRINTF("Battery Channel - Voltage: %.3fV, Current: %.6fA\n", batteryVoltage, batteryCurrent);
 
+  float chargerVoltage = readBusVoltage(INA3221_CHANNEL_CHARGER);
+  float chargerCurrent = readCurrent(INA3221_CHANNEL_CHARGER);
+
+  DEBUG_VERBOSE_PRINTF("Charger Channel - Voltage: %.3fV, Current: %.6fA\n", chargerVoltage, chargerCurrent);
+
   batteryData = BatteryData{
     batteryVoltage,
     batteryCurrent,
     batteryVoltage * batteryCurrent,
     batteryPercentage,
-    calculateEstimatedTimeToFullyDischarge(0.0f, 0.0f, batteryCurrent, batteryVoltage, batteryPercentage)
+    calculateEstimatedTimeToFullyDischarge(chargerCurrent, chargerVoltage, batteryCurrent, batteryVoltage, batteryPercentage)
   };
-
-  float chargerVoltage = readBusVoltage(INA3221_CHANNEL_CHARGER);
-  float chargerCurrent = readCurrent(INA3221_CHANNEL_CHARGER);
-
-  DEBUG_VERBOSE_PRINTF("Charger Channel - Voltage: %.3fV, Current: %.6fA\n", chargerVoltage, chargerCurrent);
 
   chargerData = ChargerData{
     chargerVoltage,
@@ -278,8 +286,8 @@ void PowerManager::readChannels(BatteryData& batteryData, ChargerData& chargerDa
     calculateEstimatedTimeToFullyCharge(chargerCurrent, chargerVoltage, batteryCurrent, batteryVoltage, batteryPercentage)
   };
 
-  DEBUG_VERBOSE_PRINTF("Charge Time Calculation - Current: %.6fA, Voltage: %.3fV, Percentage: %.1f%%, ETA: %.1fs\n",
-    chargerCurrent, batteryVoltage, batteryPercentage, chargerData.toFullyChargeMs / 1000.0f);
+  DEBUG_VERBOSE_PRINTF("Charge Time Calculation - Current: %.6fA, Voltage: %.3fV, Percentage: %.1f%%, ETA: %us\n",
+    chargerCurrent, batteryVoltage, batteryPercentage, chargerData.toFullyChargeS);
 }
 
 bool PowerManager::testINA3221() {
@@ -452,45 +460,78 @@ float PowerManager::calculateBatteryPercentage(float current, float voltage) {
 }
 
 uint32_t PowerManager::calculateEstimatedTimeToFullyCharge(float chargerCurrent, float chargerVoltage, float batteryCurrent, float batteryVoltage, float percentage) {
-  if (chargerCurrent <= 0.001f || chargerVoltage < MIN_BATTERY_CHARGING_VOLTAGE || percentage >= 99.9f) {
-    return 0.0f;
+  DEBUG_VERBOSE_PRINTF("Charge Time Calculation - Charger: %.6fA/%.3fV, Battery: %.6fA/%.3fV, Percentage: %.1f%%\n",
+    chargerCurrent, chargerVoltage, batteryCurrent, batteryVoltage, percentage);
+
+  if (chargerVoltage < MIN_BATTERY_CHARGING_VOLTAGE) {
+    DEBUG_VERBOSE_PRINTF("Charge Time: 0 (charger voltage too low: %.3fV < %.3fV)\n",
+      chargerVoltage, MIN_BATTERY_CHARGING_VOLTAGE);
+    return 0;
   }
 
-  float netChargingCurrent = chargerCurrent + batteryCurrent;
-
-  if (netChargingCurrent <= 0.001f) {
-    return 0.0f;
+  if (chargerCurrent <= 0.01f) {
+    DEBUG_VERBOSE_PRINTF("Charge Time: 0 (no charger current: %.6fA)\n", chargerCurrent);
+    return 0;
   }
 
-  float chargeRate = (netChargingCurrent * 1000.0f * 100.0f) / BATTERY_CAPACITY_MAH;
-  if (chargeRate <= 0.0f) {
-    return 0.0f;
+  if (percentage >= 99.0f) {
+    DEBUG_VERBOSE_PRINTF("Charge Time: 0 (already fully charged: %.1f%%)\n", percentage);
+    return 0;
+  }
+
+  float effectiveChargingCurrent = 0.0f;
+
+  if (batteryCurrent >= 0.0f) {
+    effectiveChargingCurrent = batteryCurrent;
+    DEBUG_VERBOSE_PRINTF("Normal charging - Battery receiving: %.6fA\n", effectiveChargingCurrent);
+  }
+  else {
+    effectiveChargingCurrent = chargerCurrent + batteryCurrent;
+    DEBUG_VERBOSE_PRINTF("Load exceeds charger - Net charging: %.6fA (Charger: %.6fA - Load: %.6fA)\n",
+      effectiveChargingCurrent, chargerCurrent, -batteryCurrent);
+
+    if (effectiveChargingCurrent <= 0.01f) {
+      DEBUG_VERBOSE_PRINTF("Charge Time: 0 (net charging too low: %.6fA)\n", effectiveChargingCurrent);
+      return 0;
+    }
+  }
+
+  float chargeRatePerHour = (effectiveChargingCurrent * 1000.0f * 100.0f) / BATTERY_CAPACITY_MAH;
+  if (chargeRatePerHour <= 0.0f) {
+    DEBUG_VERBOSE_PRINTF("Charge Time: 0 (charge rate invalid: %.6f%%/h)\n", chargeRatePerHour);
+    return 0;
   }
 
   float remainingPercentage = 100.0f - percentage;
-  float hoursToCharge = remainingPercentage / chargeRate;
+  float hoursToCharge = remainingPercentage / chargeRatePerHour;
+  uint32_t secondsToCharge = (uint32_t)(hoursToCharge * 3600.0f);
 
-  return hoursToCharge * 3600.0f * 1000.0f;
+  DEBUG_VERBOSE_PRINTF("Charge Time Calculation - Effective Current: %.6fA, Rate: %.3f%%/h, Hours: %.3f, ETA: %us\n",
+    effectiveChargingCurrent, chargeRatePerHour, hoursToCharge, secondsToCharge);
+
+  return secondsToCharge;
 }
 
 uint32_t PowerManager::calculateEstimatedTimeToFullyDischarge(float chargerCurrent, float chargerVoltage, float batteryCurrent, float batteryVoltage, float percentage) {
-  if (batteryCurrent >= 0.0f || percentage <= 0.1f) {
-    return 0.0f;
+  if (batteryCurrent >= 0.0f) {
+    DEBUG_VERBOSE_PRINTF("Discharge Time: 0 (battery not discharging: %.6fA)\n", batteryCurrent);
+    return 0;
   }
 
-  float netDischargeCurrent = -batteryCurrent;
-
-  if (netDischargeCurrent <= 0.001f) {
-    return 0.0f;
+  if (percentage <= 1.0f) {
+    DEBUG_VERBOSE_PRINTF("Discharge Time: 0 (battery too low: %.1f%%)\n", percentage);
+    return 0;
   }
 
-  float dischargeRate = (netDischargeCurrent * 1000.0f * 100.0f) / BATTERY_CAPACITY_MAH;
-  if (dischargeRate <= 0.0f) {
-    return 0.0f;
-  }
+  float dischargeCurrent = -batteryCurrent;
+  float dischargeRatePerHour = (dischargeCurrent * 1000.0f * 100.0f) / BATTERY_CAPACITY_MAH;
 
-  float remainingPercentage = percentage;
-  float hoursToDischarge = remainingPercentage / dischargeRate;
+  float remainingPercentage = percentage - 1.0f;
+  float hoursToDischarge = remainingPercentage / dischargeRatePerHour;
+  uint32_t secondsToDischarge = (uint32_t)(hoursToDischarge * 3600.0f);
 
-  return hoursToDischarge * 3600.0f * 1000.0f;
+  DEBUG_VERBOSE_PRINTF("Discharge Time Calculation - Current: %.6fA, Rate: %.3f%%/h, Hours: %.3f, ETA: %us\n",
+    dischargeCurrent, dischargeRatePerHour, hoursToDischarge, secondsToDischarge);
+
+  return secondsToDischarge;
 }
