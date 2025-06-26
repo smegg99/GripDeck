@@ -121,6 +121,8 @@ private:
 
   bool shouldSBCBePoweredOn();
 
+  float interpPercent(float v);
+
   float calculateBatteryPercentage(float current, float voltage);
   uint32_t calculateEstimatedTimeToFullyCharge(float chargerCurrent, float chargerVoltage, float batteryCurrent, float batteryVoltage, float percentage);
 

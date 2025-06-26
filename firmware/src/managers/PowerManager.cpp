@@ -373,34 +373,30 @@ bool PowerManager::initializeINA3221() {
     return false;
   }
 
-  // Reset the INA3221 to default configuration
   DEBUG_PRINTLN("Resetting INA3221 to default configuration...");
   Wire.beginTransmission(INA3221_I2C_ADDRESS);
-  Wire.write(0x00); // Configuration register
-  Wire.write(0x82); // Reset bit (bit 15) + default config high byte
-  Wire.write(0x00); // Default config low byte
+  Wire.write(0x00);
+  Wire.write(0x82);
+  Wire.write(0x00);
   if (Wire.endTransmission() != 0) {
     DEBUG_PRINTLN("ERROR: Failed to reset INA3221");
     return false;
   }
-  delay(10); // Wait for reset to complete
+  delay(10);
 
-  // Configure the INA3221 for continuous mode with all channels enabled
   DEBUG_PRINTLN("Configuring INA3221 for continuous measurement...");
   Wire.beginTransmission(INA3221_I2C_ADDRESS);
-  Wire.write(0x00); // Configuration register
-  Wire.write(0x72); // Enable all channels, continuous mode, 1024 samples averaging
-  Wire.write(0x47); // Bus voltage conversion time = 4.156ms, Shunt voltage conversion time = 4.156ms
+  Wire.write(0x00);
+  Wire.write(0x72);
+  Wire.write(0x47);
   if (Wire.endTransmission() != 0) {
     DEBUG_PRINTLN("ERROR: Failed to configure INA3221");
     return false;
   }
 
-  // Verify configuration was written correctly
   uint16_t config = readRegister(0x00);
   DEBUG_PRINTF("INA3221 Configuration register: 0x%04X\n", config);
 
-  // Check if channels are enabled
   bool ch1_enabled = (config & 0x4000) != 0;
   bool ch2_enabled = (config & 0x2000) != 0;
   bool ch3_enabled = (config & 0x1000) != 0;
@@ -413,50 +409,37 @@ bool PowerManager::initializeINA3221() {
   return true;
 }
 
+float PowerManager::interpPercent(float v) {
+  if (v <= kVoltagePoints[0])       return kPercentagePoints[0];
+  if (v >= kVoltagePoints[kNumPoints - 1])
+    return kPercentagePoints[kNumPoints - 1];
+  
+  int i = std::upper_bound(
+    kVoltagePoints,
+    kVoltagePoints + kNumPoints,
+    v
+  ) - kVoltagePoints;
+
+  float v0 = kVoltagePoints[i - 1], v1 = kVoltagePoints[i];
+  float p0 = kPercentagePoints[i - 1], p1 = kPercentagePoints[i];
+  float t = (v - v0) / (v1 - v0);
+  return p0 + t * (p1 - p0);
+}
+
 float PowerManager::calculateBatteryPercentage(float current, float voltage) {
-  const float LIPO_MIN_VOLTAGE = 3.0f;
-  const float LIPO_MAX_VOLTAGE = 4.2f;
-  const float LIPO_NOMINAL = 3.7f;
-  const float LIPO_CUTOFF = 3.3f;
-
-  // Values based on typical LiPo discharge curve
-  const float voltagePoints[] = { 3.0f, 3.3f, 3.5f, 3.6f, 3.7f, 3.8f, 3.9f, 4.0f, 4.1f, 4.2f };
-  const float percentagePoints[] = { 0.0f, 5.0f, 15.0f, 25.0f, 40.0f, 60.0f, 75.0f, 85.0f, 95.0f, 100.0f };
-  const int numPoints = sizeof(voltagePoints) / sizeof(voltagePoints[0]);
-
-  if (voltage < LIPO_MIN_VOLTAGE) return 0.0f;
-  if (voltage >= LIPO_MAX_VOLTAGE) return 100.0f;
-
-  float basePercentage = 0.0f;
-  for (int i = 0; i < numPoints - 1; i++) {
-    if (voltage >= voltagePoints[i] && voltage <= voltagePoints[i + 1]) {
-      float ratio = (voltage - voltagePoints[i]) / (voltagePoints[i + 1] - voltagePoints[i]);
-      basePercentage = percentagePoints[i] + ratio * (percentagePoints[i + 1] - percentagePoints[i]);
-      break;
-    }
-  }
-
-  float voltageSagCompensation = 0.0f;
+  float soc = interpPercent(voltage);
+  float sagDelta = 0.0f;
   if (current < -0.5f) {
-    float estimatedSag = abs(current) * 0.1f;
-    float compensatedVoltage = voltage + estimatedSag;
-
-    for (int i = 0; i < numPoints - 1; i++) {
-      if (compensatedVoltage >= voltagePoints[i] && compensatedVoltage <= voltagePoints[i + 1]) {
-        float ratio = (compensatedVoltage - voltagePoints[i]) / (voltagePoints[i + 1] - voltagePoints[i]);
-        float compensatedPercentage = percentagePoints[i] + ratio * (percentagePoints[i + 1] - percentagePoints[i]);
-        voltageSagCompensation = compensatedPercentage - basePercentage;
-        break;
-      }
-    }
+    float vComp = voltage + (-current * kInternalR);
+    float socComp = interpPercent(vComp);
+    sagDelta = socComp - soc;
   }
 
-  float finalPercentage = basePercentage + voltageSagCompensation;
+  float finalPct = soc + sagDelta;
 
-  if (finalPercentage < 0.0f) finalPercentage = 0.0f;
-  if (finalPercentage > 100.0f) finalPercentage = 100.0f;
-
-  return finalPercentage;
+  if (finalPct < 0.0f) finalPct = 0.0f;
+  if (finalPct > 100.0f) finalPct = 100.0f;
+  return finalPct;
 }
 
 uint32_t PowerManager::calculateEstimatedTimeToFullyCharge(float chargerCurrent, float chargerVoltage, float batteryCurrent, float batteryVoltage, float percentage) {

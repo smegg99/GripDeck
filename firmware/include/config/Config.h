@@ -47,10 +47,12 @@
 // ====================================================================
 // POWER MANAGEMENT CONFIGURATION
 // ====================================================================
-#define BATTERY_MIN_PERCENTAGE              5       // Minimum battery percentage to allow SBC startup
-#define BATTERY_CAPACITY_MAH                1000    // Battery capacity in mAh
-#define BATTERY_SAVING_MODE                 15      // Battery percentage for low power mode
-#define MIN_BATTERY_CHARGING_VOLTAGE        4.0     // Minimum voltage to consider charging, I have perhaps lowered it too much but thats how much my front panel USB port provides kek
+#define BATTERY_MIN_PERCENTAGE              5        // Minimum battery percentage to allow SBC startup
+#define BATTERY_CAPACITY_MAH                4500     // Battery capacity in mAh
+#define BATTERY_TECH_LIPO // Uncomment this line if using LiPo battery technology
+#define BATTERY_TECH_LI_ION 
+#define BATTERY_SAVING_MODE                 15       // Battery percentage for low power mode
+#define MIN_BATTERY_CHARGING_VOLTAGE        4.0      // Minimum voltage to consider charging, I have perhaps lowered it too much but thats how much my front panel USB port provides kek
 
 // ====================================================================
 // POWER BUTTON CONFIGURATION
@@ -160,7 +162,43 @@
 // ====================================================================
 #define DEBUG_ENABLED                       false
 #define DEBUG_SERIAL_ENABLED                false     // Enable secondary serial for debug output
-#define DEBUG_SERIAL_BAUD_RATE              115200   // Debug serial baud rate
+#define DEBUG_SERIAL_BAUD_RATE              115200    // Debug serial baud rate
 #define DEBUG_VERBOSE_LOGGING               false     // Enable verbose logging for debugging
+
+// ====================================================================
+// BATTERY CONFIGURATION
+// ====================================================================
+#if defined(BATTERY_TECH_LIPO)
+
+static constexpr float kMinVoltage = 3.0f;
+static constexpr float kMaxVoltage = 4.2f;
+static constexpr float kInternalR = 0.04f;
+
+static constexpr float kVoltagePoints[] = {
+    3.0f, 3.3f, 3.5f, 3.6f, 3.7f, 3.8f, 3.9f, 4.0f, 4.1f, 4.2f
+};
+static constexpr float kPercentagePoints[] = {
+    0.0f, 5.0f,15.0f,25.0f,40.0f,60.0f,75.0f,85.0f,95.0f,100.0f
+};
+
+#elif defined(BATTERY_TECH_LI_ION)
+
+static constexpr float kMinVoltage = 2.5f;
+static constexpr float kMaxVoltage = 4.2f;
+static constexpr float kInternalR = 0.08f;
+
+static constexpr float kVoltagePoints[] = {
+    2.5f, 2.9f, 3.2f, 3.4f, 3.6f, 3.7f, 3.8f, 3.9f, 4.0f, 4.2f
+};
+static constexpr float kPercentagePoints[] = {
+    0.0f, 5.0f,15.0f,25.0f,40.0f,60.0f,75.0f,85.0f,95.0f,100.0f
+};
+
+#else
+#  error "You must define either BATTERY_TECH_LIPO or BATTERY_TECH_LI_ION"
+#endif
+
+static constexpr int kNumPoints =
+sizeof(kVoltagePoints) / sizeof(kVoltagePoints[0]);
 
 #endif // CONFIG_H
